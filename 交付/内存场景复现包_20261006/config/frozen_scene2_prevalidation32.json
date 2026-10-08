@@ -1,0 +1,1825 @@
+{
+  "schema_version": 2,
+  "qualification_scope": "prevalidation_32gb",
+  "dram_gib": 32,
+  "environment": {
+    "target": "3QC0124C03000514",
+    "kernel": "HarmonyOS localhost HongMeng Kernel 1.13.0 #1 SMP Mon Oct  5 06:32:08 UTC 2026 aarch64 Toybox",
+    "meminfo": {
+      "MemTotal": 33463963648,
+      "MemFree": 25664155648,
+      "MemAvailable": 26494369792,
+      "Buffers": 0,
+      "Cached": 2597474304,
+      "SwapCached": 53305344,
+      "Active": 1300738048,
+      "Inactive": 1851211776,
+      "Active(anon)": 37974016,
+      "Inactive(anon)": 1125965824,
+      "Active(file)": 1262764032,
+      "Inactive(file)": 725245952,
+      "Active(purg)": 0,
+      "Inactive(purg)": 0,
+      "Pined(purg)": 0,
+      "Unevictable": 47529984,
+      "FileUnmap": 88926045,
+      "FileUnmapFail": 51720609,
+      "Protected": 464998400,
+      "Mlocked": 115232768,
+      "SwapTotal": 53687091200,
+      "SwapFree": 52360392704,
+      "ZramUsed": 294498304,
+      "Dirty": 679936,
+      "Writeback": 0,
+      "AnonPages": 1736167424,
+      "Mapped": 481812480,
+      "Shmem": 79437824,
+      "Slab": 494370816,
+      "SReclaimable": 248201216,
+      "SUnreclaim": 246168576,
+      "SlabLarge": 0,
+      "KReclaimable": 255352832,
+      "KernelStack": 67428352,
+      "KernelDynamic": 44302336,
+      "PageTables": 155709440,
+      "NFS_Unstable": 0,
+      "Bounce": 0,
+      "WritebackTmp": 0,
+      "CommitLimit": 70415927296,
+      "Committed_AS": 39480901632,
+      "VmallocTotal": 549755748352,
+      "VmallocUsed": 40005632,
+      "VmallocChunk": 0,
+      "Percpu": 0,
+      "HardwareCorrupted": 0,
+      "CmaTotal": 624951296,
+      "CmaFree": 612970496,
+      "CmaUsed": 11980800,
+      "IonTotalCache": 178573312,
+      "IonTotalUsed": 650809344,
+      "GpuTotalUsed": 158224384,
+      "DmaHeapTotalCache": 178573312,
+      "DmaHeapTotalUsed": 650809344,
+      "DmaHeapReusedlistCache": 0,
+      "DmaHeapFreelistCache": 0,
+      "DmaHeapThirdTotalUsed": 27295744,
+      "RsvTotalUsed": 267390976,
+      "AnonHugePages": 0,
+      "ShmemHugePages": 0,
+      "ShmemPmdMapped": 0,
+      "HugePages_Total": 3,
+      "HugePages_Free": 0,
+      "HugePages_Rsvd": 0,
+      "HugePages_Surp": 0,
+      "Hugepagesize": 2097152,
+      "Hugetlb": 6291456,
+      "AshmemUsed": 69414912
+    },
+    "data_storage_df": "Filesystem             1K-blocks      Used Available Use% Mounted on\n/dev/block/nvme0n1p118 972831044 133122156 839708888  14% /mnt/user/100/nosharefs/appdata/el1/base\n",
+    "reported_dram_gib": 32,
+    "device_time_ms": 1791280875000,
+    "hdc_version": "Ver: 3.2.0f"
+  },
+  "qualification_source": "evidence/scene2_qualification_180114/result.json",
+  "qualification_source_sha256": "6583fea4ed512b0805f6032a9b842682825fa5f6f8d67dd98e6ce3d7eb952ac7",
+  "suite_hash": "e7eece713001e722180fa6ccfb51078487b4e9dea0b95bd096426f33f28f7759",
+  "suite": {
+    "schema_version": 1,
+    "scene": 2,
+    "profile": "qualification",
+    "dram_gib": 32,
+    "test_apps": [
+      "io.memscene.workload.a1",
+      "io.memscene.workload.a2",
+      "io.memscene.workload.a3",
+      "io.memscene.workload.a4",
+      "io.memscene.workload.a5",
+      "io.memscene.workload.a6",
+      "io.memscene.workload.a7",
+      "io.memscene.workload.a8"
+    ],
+    "real_apps": {
+      "腾讯会议": {
+        "bundle": "com.tencent.meeting.app",
+        "module": "application",
+        "ability": "NXHostUIAbility"
+      },
+      "浏览器": {
+        "bundle": "com.huawei.hmos.browser",
+        "module": "entry",
+        "ability": "MainAbility"
+      },
+      "海泰浏览器": {
+        "bundle": "com.haitai.htbrowser",
+        "module": "pc_entry",
+        "ability": "EntryAbility"
+      },
+      "文件管理器": {
+        "bundle": "com.huawei.hmos.filemanager",
+        "module": "pc",
+        "ability": "MainAbility"
+      },
+      "WPS": {
+        "bundle": "cn.wps.office.hap",
+        "module": "prome",
+        "ability": "PromeAbility"
+      },
+      "应用市场": {
+        "bundle": "com.huawei.hmsapp.appgallery",
+        "module": "entry",
+        "ability": "MainAbility"
+      }
+    },
+    "order": null,
+    "settings": {
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 90,
+      "ready_timeout_seconds": 600,
+      "lifetime_seconds": 720,
+      "case_cycles": 1,
+      "case_repetitions": {
+        "startup": 9,
+        "oom": 1,
+        "popup": 1
+      },
+      "seed": 20261005,
+      "calibration_peak_mib_levels": [
+        5120,
+        12288
+      ],
+      "calibration_hold_seconds": 15,
+      "case_profiles": {
+        "popup": {
+          "strategy": "foreground_popup_with_background_pressure",
+          "peak_mib": 5120,
+          "hold_seconds": 60
+        },
+        "startup": {
+          "strategy": "simultaneous_peak_during_startup",
+          "peak_mib": 12288,
+          "hold_seconds": 0
+        },
+        "oom": {
+          "strategy": "simultaneous_peak_then_hold",
+          "peak_mib": 12288,
+          "hold_seconds": 15
+        }
+      },
+      "baseline_min_events": 100
+    },
+    "popup_text_patterns": [
+      "内存不足",
+      "低内存",
+      "low memory",
+      "not enough memory",
+      "insufficient memory"
+    ]
+  },
+  "cases": [
+    {
+      "kind": "popup",
+      "strategy": "foreground_popup_with_background_pressure",
+      "bundles": [
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 5120,
+      "hold_seconds": 60,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8",
+        "io.memscene.workload.a1"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8",
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8",
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8",
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8",
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8",
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a8",
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "startup",
+      "strategy": "simultaneous_peak_during_startup",
+      "bundles": [
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 0,
+      "seed": 20261005
+    },
+    {
+      "kind": "oom",
+      "strategy": "simultaneous_peak_then_hold",
+      "bundles": [
+        "io.memscene.workload.a1",
+        "io.memscene.workload.a2",
+        "io.memscene.workload.a3",
+        "io.memscene.workload.a4",
+        "io.memscene.workload.a5",
+        "io.memscene.workload.a6",
+        "io.memscene.workload.a7",
+        "io.memscene.workload.a8"
+      ],
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 15,
+      "seed": 20261005
+    }
+  ],
+  "cases_hash": "8e77203ce046857bcc77eba717bee7135a6b717c16cdbb96da0d90b9c449c27e",
+  "calibration": {
+    "schema_version": 1,
+    "suite_hash": "e7eece713001e722180fa6ccfb51078487b4e9dea0b95bd096426f33f28f7759",
+    "profile": "qualification",
+    "measurements": [
+      {
+        "bundle": "io.memscene.workload.a1",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single0_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a1",
+            "pid": 15397,
+            "uid": 20020180,
+            "start_ticks": "2740906",
+            "first_uptime": 10245.56,
+            "last_seen_uptime": 10272.39,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5424150528,
+        "measured_daily_private_bytes": 320514048,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320514048,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a2",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single1_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a2",
+            "pid": 16540,
+            "uid": 20020181,
+            "start_ticks": "2750542",
+            "first_uptime": 10333.76,
+            "last_seen_uptime": 10359.52,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5423906816,
+        "measured_daily_private_bytes": 318911488,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 318911488,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a3",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single2_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a3",
+            "pid": 17630,
+            "uid": 20020182,
+            "start_ticks": "2758563",
+            "first_uptime": 10419.72,
+            "last_seen_uptime": 10445.62,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5424173056,
+        "measured_daily_private_bytes": 320696320,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320696320,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a4",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single3_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a4",
+            "pid": 18675,
+            "uid": 20020183,
+            "start_ticks": "2768194",
+            "first_uptime": 10505.86,
+            "last_seen_uptime": 10532.01,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5424068608,
+        "measured_daily_private_bytes": 320541696,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320541696,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a5",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single4_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a5",
+            "pid": 19628,
+            "uid": 20020184,
+            "start_ticks": "2776236",
+            "first_uptime": 10592.02,
+            "last_seen_uptime": 10618.28,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5423933440,
+        "measured_daily_private_bytes": 320429056,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320429056,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a6",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single5_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a6",
+            "pid": 20558,
+            "uid": 20020185,
+            "start_ticks": "2784253",
+            "first_uptime": 10677.97,
+            "last_seen_uptime": 10704.1,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5423939584,
+        "measured_daily_private_bytes": 320489472,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320489472,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a7",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single6_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a7",
+            "pid": 21661,
+            "uid": 20020186,
+            "start_ticks": "2793888",
+            "first_uptime": 10764.03,
+            "last_seen_uptime": 10790.21,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5424009216,
+        "measured_daily_private_bytes": 320461824,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320461824,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a8",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single7_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a8",
+            "pid": 22714,
+            "uid": 20020187,
+            "start_ticks": "2801909",
+            "first_uptime": 10849.67,
+            "last_seen_uptime": 10875.6,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5423853568,
+        "measured_daily_private_bytes": 320232448,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320232448,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a1",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single0_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a1",
+            "pid": 23652,
+            "uid": 20020180,
+            "start_ticks": "2809944",
+            "first_uptime": 10936.21,
+            "last_seen_uptime": 10976.44,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941999104,
+        "measured_daily_private_bytes": 320429056,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320429056,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a2",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single1_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a2",
+            "pid": 24991,
+            "uid": 20020181,
+            "start_ticks": "2821263",
+            "first_uptime": 11043.28,
+            "last_seen_uptime": 11082.99,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12940063744,
+        "measured_daily_private_bytes": 320259072,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320259072,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a3",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single2_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a3",
+            "pid": 26423,
+            "uid": 20020182,
+            "start_ticks": "2832411",
+            "first_uptime": 11149.71,
+            "last_seen_uptime": 11189.54,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941993984,
+        "measured_daily_private_bytes": 320350208,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320350208,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a4",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single3_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a4",
+            "pid": 27613,
+            "uid": 20020183,
+            "start_ticks": "2842036",
+            "first_uptime": 11255.65,
+            "last_seen_uptime": 11295.61,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941926400,
+        "measured_daily_private_bytes": 320226304,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320226304,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a5",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single4_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a5",
+            "pid": 28930,
+            "uid": 20020184,
+            "start_ticks": "2853276",
+            "first_uptime": 11363.13,
+            "last_seen_uptime": 11402.89,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12942102528,
+        "measured_daily_private_bytes": 320471040,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320471040,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a6",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single5_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a6",
+            "pid": 30406,
+            "uid": 20020185,
+            "start_ticks": "2864520",
+            "first_uptime": 11469.15,
+            "last_seen_uptime": 11508.83,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 13312230400,
+        "measured_daily_private_bytes": 320277504,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320277504,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a7",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single6_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a7",
+            "pid": 31646,
+            "uid": 20020186,
+            "start_ticks": "2874145",
+            "first_uptime": 11575.04,
+            "last_seen_uptime": 11614.24,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941796352,
+        "measured_daily_private_bytes": 320172032,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320172032,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a8",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single7_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a8",
+            "pid": 33013,
+            "uid": 20020187,
+            "start_ticks": "2885387",
+            "first_uptime": 11680.51,
+            "last_seen_uptime": 11720.2,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941714432,
+        "measured_daily_private_bytes": 320136192,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320136192,
+        "failure_stage": null
+      }
+    ],
+    "checks": {
+      "valid": true,
+      "errors": [],
+      "by_peak_mib": {
+        "5120": {
+          "valid": true,
+          "errors": [],
+          "daily_sum_bytes": 2562276352,
+          "peak_sum_bytes": 42949672960,
+          "dram_bytes": 34359738368
+        },
+        "12288": {
+          "valid": true,
+          "errors": [],
+          "daily_sum_bytes": 2562321408,
+          "peak_sum_bytes": 103079215104,
+          "dram_bytes": 34359738368
+        }
+      },
+      "required_peak_mib": [
+        5120,
+        12288
+      ]
+    },
+    "level_history": [
+      {
+        "bundle": "io.memscene.workload.a1",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single0_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a1",
+            "pid": 15397,
+            "uid": 20020180,
+            "start_ticks": "2740906",
+            "first_uptime": 10245.56,
+            "last_seen_uptime": 10272.39,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5424150528,
+        "measured_daily_private_bytes": 320514048,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320514048,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a2",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single1_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a2",
+            "pid": 16540,
+            "uid": 20020181,
+            "start_ticks": "2750542",
+            "first_uptime": 10333.76,
+            "last_seen_uptime": 10359.52,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5423906816,
+        "measured_daily_private_bytes": 318911488,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 318911488,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a3",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single2_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a3",
+            "pid": 17630,
+            "uid": 20020182,
+            "start_ticks": "2758563",
+            "first_uptime": 10419.72,
+            "last_seen_uptime": 10445.62,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5424173056,
+        "measured_daily_private_bytes": 320696320,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320696320,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a4",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single3_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a4",
+            "pid": 18675,
+            "uid": 20020183,
+            "start_ticks": "2768194",
+            "first_uptime": 10505.86,
+            "last_seen_uptime": 10532.01,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5424068608,
+        "measured_daily_private_bytes": 320541696,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320541696,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a5",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single4_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a5",
+            "pid": 19628,
+            "uid": 20020184,
+            "start_ticks": "2776236",
+            "first_uptime": 10592.02,
+            "last_seen_uptime": 10618.28,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5423933440,
+        "measured_daily_private_bytes": 320429056,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320429056,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a6",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single5_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a6",
+            "pid": 20558,
+            "uid": 20020185,
+            "start_ticks": "2784253",
+            "first_uptime": 10677.97,
+            "last_seen_uptime": 10704.1,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5423939584,
+        "measured_daily_private_bytes": 320489472,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320489472,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a7",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single6_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a7",
+            "pid": 21661,
+            "uid": 20020186,
+            "start_ticks": "2793888",
+            "first_uptime": 10764.03,
+            "last_seen_uptime": 10790.21,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5424009216,
+        "measured_daily_private_bytes": 320461824,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320461824,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a8",
+        "peak_mib": 5120,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 60,
+        "used_by_kinds": [
+          "popup"
+        ],
+        "case_id": "s2_f32579da573e_single7_l0",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a8",
+            "pid": 22714,
+            "uid": 20020187,
+            "start_ticks": "2801909",
+            "first_uptime": 10849.67,
+            "last_seen_uptime": 10875.6,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 5368709120,
+        "journal_touched_peak_bytes": 5368709120,
+        "measured_peak_private_bytes": 5423853568,
+        "measured_daily_private_bytes": 320232448,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320232448,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a1",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single0_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a1",
+            "pid": 23652,
+            "uid": 20020180,
+            "start_ticks": "2809944",
+            "first_uptime": 10936.21,
+            "last_seen_uptime": 10976.44,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941999104,
+        "measured_daily_private_bytes": 320429056,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320429056,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a2",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single1_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a2",
+            "pid": 24991,
+            "uid": 20020181,
+            "start_ticks": "2821263",
+            "first_uptime": 11043.28,
+            "last_seen_uptime": 11082.99,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12940063744,
+        "measured_daily_private_bytes": 320259072,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320259072,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a3",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single2_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a3",
+            "pid": 26423,
+            "uid": 20020182,
+            "start_ticks": "2832411",
+            "first_uptime": 11149.71,
+            "last_seen_uptime": 11189.54,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941993984,
+        "measured_daily_private_bytes": 320350208,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320350208,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a4",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single3_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a4",
+            "pid": 27613,
+            "uid": 20020183,
+            "start_ticks": "2842036",
+            "first_uptime": 11255.65,
+            "last_seen_uptime": 11295.61,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941926400,
+        "measured_daily_private_bytes": 320226304,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320226304,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a5",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single4_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a5",
+            "pid": 28930,
+            "uid": 20020184,
+            "start_ticks": "2853276",
+            "first_uptime": 11363.13,
+            "last_seen_uptime": 11402.89,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12942102528,
+        "measured_daily_private_bytes": 320471040,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320471040,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a6",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single5_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a6",
+            "pid": 30406,
+            "uid": 20020185,
+            "start_ticks": "2864520",
+            "first_uptime": 11469.15,
+            "last_seen_uptime": 11508.83,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 13312230400,
+        "measured_daily_private_bytes": 320277504,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320277504,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a7",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single6_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a7",
+            "pid": 31646,
+            "uid": 20020186,
+            "start_ticks": "2874145",
+            "first_uptime": 11575.04,
+            "last_seen_uptime": 11614.24,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941796352,
+        "measured_daily_private_bytes": 320172032,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320172032,
+        "failure_stage": null
+      },
+      {
+        "bundle": "io.memscene.workload.a8",
+        "peak_mib": 12288,
+        "calibration_hold_seconds": 15,
+        "suite_hold_seconds": 15,
+        "used_by_kinds": [
+          "startup",
+          "oom"
+        ],
+        "case_id": "s2_f32579da573e_single7_l1",
+        "measured": true,
+        "terminal_complete": true,
+        "outcome": "success",
+        "terminal_events": [],
+        "process_identities": [
+          {
+            "bundle": "io.memscene.workload.a8",
+            "pid": 33013,
+            "uid": 20020187,
+            "start_ticks": "2885387",
+            "first_uptime": 11680.51,
+            "last_seen_uptime": 11720.2,
+            "first_absent_uptime": null,
+            "end_reason": null
+          }
+        ],
+        "peak_observed": true,
+        "ready_observed": true,
+        "daily_stage_observed": true,
+        "peak_begin_observed": true,
+        "peak_bytes": 12884901888,
+        "journal_touched_peak_bytes": 12884901888,
+        "measured_peak_private_bytes": 12941714432,
+        "measured_daily_private_bytes": 320136192,
+        "daily_journal_touched_bytes": 268435456,
+        "daily_bytes": 320136192,
+        "failure_stage": null
+      }
+    ],
+    "settings": {
+      "daily_mib": 256,
+      "peak_mib": 12288,
+      "hold_seconds": 90,
+      "ready_timeout_seconds": 600,
+      "lifetime_seconds": 720,
+      "case_cycles": 1,
+      "case_repetitions": {
+        "startup": 9,
+        "oom": 1,
+        "popup": 1
+      },
+      "seed": 20261005,
+      "calibration_peak_mib_levels": [
+        5120,
+        12288
+      ],
+      "calibration_hold_seconds": 15,
+      "case_profiles": {
+        "popup": {
+          "strategy": "foreground_popup_with_background_pressure",
+          "peak_mib": 5120,
+          "hold_seconds": 60
+        },
+        "startup": {
+          "strategy": "simultaneous_peak_during_startup",
+          "peak_mib": 12288,
+          "hold_seconds": 0
+        },
+        "oom": {
+          "strategy": "simultaneous_peak_then_hold",
+          "peak_mib": 12288,
+          "hold_seconds": 15
+        }
+      },
+      "baseline_min_events": 100
+    },
+    "calibration_profiles": [
+      {
+        "peak_mib": 5120,
+        "hold_seconds": 60,
+        "kinds": [
+          "popup"
+        ]
+      },
+      {
+        "peak_mib": 12288,
+        "hold_seconds": 15,
+        "kinds": [
+          "startup",
+          "oom"
+        ]
+      }
+    ],
+    "environment": {
+      "target": "3QC0124C03000514",
+      "kernel": "HarmonyOS localhost HongMeng Kernel 1.13.0 #1 SMP Mon Oct  5 06:32:08 UTC 2026 aarch64 Toybox",
+      "meminfo": {
+        "MemTotal": 33463963648,
+        "MemFree": 26665738240,
+        "MemAvailable": 26749173760,
+        "Buffers": 0,
+        "Cached": 1624276992,
+        "SwapCached": 53219328,
+        "Active": 624803840,
+        "Inactive": 1514954752,
+        "Active(anon)": 30826496,
+        "Inactive(anon)": 1088778240,
+        "Active(file)": 593977344,
+        "Inactive(file)": 426176512,
+        "Active(purg)": 0,
+        "Inactive(purg)": 0,
+        "Pined(purg)": 0,
+        "Unevictable": 47529984,
+        "FileUnmap": 59524290,
+        "FileUnmapFail": 29396211,
+        "Protected": 442929152,
+        "Mlocked": 115273728,
+        "SwapTotal": 53687091200,
+        "SwapFree": 52354146304,
+        "ZramUsed": 310329344,
+        "Dirty": 442368,
+        "Writeback": 0,
+        "AnonPages": 1694498816,
+        "Mapped": 493629440,
+        "Shmem": 95612928,
+        "Slab": 469049344,
+        "SReclaimable": 234761216,
+        "SUnreclaim": 234287104,
+        "SlabLarge": 0,
+        "KReclaimable": 237476864,
+        "KernelStack": 59432960,
+        "KernelDynamic": 42786816,
+        "PageTables": 152645632,
+        "NFS_Unstable": 0,
+        "Bounce": 0,
+        "WritebackTmp": 0,
+        "CommitLimit": 70415927296,
+        "Committed_AS": 38701518848,
+        "VmallocTotal": 549755748352,
+        "VmallocUsed": 40046592,
+        "VmallocChunk": 0,
+        "Percpu": 0,
+        "HardwareCorrupted": 0,
+        "CmaTotal": 624951296,
+        "CmaFree": 612970496,
+        "CmaUsed": 11980800,
+        "IonTotalCache": 179441664,
+        "IonTotalUsed": 669159424,
+        "GpuTotalUsed": 157061120,
+        "DmaHeapTotalCache": 179441664,
+        "DmaHeapTotalUsed": 669159424,
+        "DmaHeapReusedlistCache": 0,
+        "DmaHeapFreelistCache": 0,
+        "DmaHeapThirdTotalUsed": 27295744,
+        "RsvTotalUsed": 267390976,
+        "AnonHugePages": 0,
+        "ShmemHugePages": 0,
+        "ShmemPmdMapped": 0,
+        "HugePages_Total": 3,
+        "HugePages_Free": 0,
+        "HugePages_Rsvd": 0,
+        "HugePages_Surp": 0,
+        "Hugepagesize": 2097152,
+        "Hugetlb": 6291456,
+        "AshmemUsed": 75758592
+      },
+      "data_storage_df": "Filesystem             1K-blocks      Used Available Use% Mounted on\n/dev/block/nvme0n1p118 972831044 121265896 851565148  13% /mnt/user/100/nosharefs/appdata/el1/base\n",
+      "reported_dram_gib": 32,
+      "device_time_ms": 1791275882000,
+      "hdc_version": "Ver: 3.2.0f"
+    }
+  },
+  "calibration_source": "results/calibration_qualification32.json",
+  "calibration_sha256": "64a6b99fcc02a0669cabd20525eb720e97e716de6b6b64552dc8d0ceefe7543b",
+  "baseline_source": "evidence/scene2_qualification_180114/result.json",
+  "qualification_counts": {
+    "startup_failure": 63,
+    "oom_kill": 63,
+    "memory_policy_kill": 0,
+    "low_memory_popup_native": 11,
+    "low_memory_popup_test": 0,
+    "startup_timeout": 0,
+    "low_memory_popup": 11,
+    "unique_incidents": 74,
+    "total_events": 137
+  },
+  "raw_measurement_complete": false,
+  "raw_measurement_evidence_complete": false,
+  "ui_audit_source": "evidence/scene2_qualification_180114/qualification_ui_audit.json",
+  "ui_audit_sha256": "8c52a2e56441e33e66b7afe8b54cf321a762875b07b5530f008598e07d3705bb",
+  "ui_audit_source_hashes": {
+    "result_json": "6583fea4ed512b0805f6032a9b842682825fa5f6f8d67dd98e6ce3d7eb952ac7",
+    "case_results_json": "8a2240db9c07299de2e6168f2c982f89fc708d8148d8fc6c8512562e930ba2cb",
+    "progress_json": "468d9c870e94be781176a07287ee465c4b507d2ffaf42a3d6a20520d8feaba78",
+    "events_canonical": "a8170185109eac1d2be55dde2e5a6cc9324c9af32388c5a9a4c97ed5b77a6c6c",
+    "cases_canonical": "8e77203ce046857bcc77eba717bee7135a6b717c16cdbb96da0d90b9c449c27e",
+    "case_results_content_matches": true,
+    "progress_case_ends": "def5efa099f111392866e9cd8884af0833f2bcc9fb6568397358738d0aec69f9",
+    "ui_evidence": {
+      "ui/s2_00d7aec837f3_c0000_0.png": "09f1d90b99fe5755980e2b989a20d39b0d466db67c9d8a08e32c4d50c5995ff7",
+      "ui/s2_00d7aec837f3_c0000_0.json": "bef2a7cb9d682c8e5ff83a488ecb95564755665489df1bc0331e053377e461bb",
+      "ui/s2_00d7aec837f3_c0000_1_missions.txt": "88d99f88960a89f620f5df05abf2af6a4ef3dd0afa8ff3a4dbbc327265e9c541",
+      "ui/s2_00d7aec837f3_c0000_1.png": "796b58dd1a3500edb49875c1cef15c89c8ffd1d7b541c2266dfbc2d256deebc8",
+      "ui/s2_00d7aec837f3_c0000_1.json": "9b2e02cbff19d15665dbfd03a7f066412d1ee5e53b42b821c76f3946ed95edca",
+      "ui/s2_00d7aec837f3_c0000_2_missions.txt": "88d99f88960a89f620f5df05abf2af6a4ef3dd0afa8ff3a4dbbc327265e9c541",
+      "ui/s2_00d7aec837f3_c0001_5.png": "d4a5da31b54fe98a9588cf597fc38ad2fabef126763f33c7b666a43a07c1c6e8",
+      "ui/s2_00d7aec837f3_c0001_5.json": "41c0de171b81c32fe1679335082350e083a0e28a1de0330ec5617783f6d5e375",
+      "ui/s2_00d7aec837f3_c0001_7_missions.txt": "8c3f0ad5c35c42b1a896cacba80d2f24c97330d5d8399ea4a13a6d1984a83f6c",
+      "ui/s2_00d7aec837f3_c0002_8.png": "eb73b4bdacaddffabcaf4aa7509508add6d31f4c4bb4ae4f796972e6ba9492db",
+      "ui/s2_00d7aec837f3_c0002_8.json": "8ecf02e598b07eac33400c713acebf73d6ecca30d840314b93783cafa8501204",
+      "ui/s2_00d7aec837f3_c0002_11_missions.txt": "53367cacb2f6fbf9d64567f3652b8bb7945bcc8097213a90a4fe5f23d2eca1c7",
+      "ui/s2_00d7aec837f3_c0003_11.png": "8fefe25070641e201751568d886b69c83e395271f15816042cf90dd9e3e268c3",
+      "ui/s2_00d7aec837f3_c0003_11.json": "cf4674e678b2cc05007cce0e9494a9f525e614a1386d6568ef02082cce8267dd",
+      "ui/s2_00d7aec837f3_c0003_15_missions.txt": "30eb33997bcb42d0a3fef5e84715ddaf9f28d5000e94b70ff8e9e902d8659bf0",
+      "ui/s2_00d7aec837f3_c0004_14.png": "f287ce39f467ef7566eaba00838d5fe5254eaf17bd1ec35d05550004e232158b",
+      "ui/s2_00d7aec837f3_c0004_14.json": "344bd2ca8beccea8001254139dcbc6497d16eb848f3674a6d7afdc62f232399a",
+      "ui/s2_00d7aec837f3_c0004_19_missions.txt": "b0bc920b00270d00778a540234f86e42f0d01996d3d966f37122840cd40be3ce",
+      "ui/s2_00d7aec837f3_c0005_17.png": "e068e8eb6a707c457ee49eeee5a0e8b9c66a95efe0ce868bd2c20b26353a503a",
+      "ui/s2_00d7aec837f3_c0005_17.json": "a567608e11db9cdc4fa5bd6b2432dc0ecee9bda9d8703b61d87e900cd7f96625",
+      "ui/s2_00d7aec837f3_c0005_23_missions.txt": "085800e1d0b397d8dd176530026687fc8674e799b64d004eb795be9df4fdd34c",
+      "ui/s2_00d7aec837f3_c0006_20.png": "b9f036dc8b3cf03b24ba7f85d697112761f19e258ff5346a5d444035183bdf42",
+      "ui/s2_00d7aec837f3_c0006_20.json": "9146869bbb45419a5eae6db002a41f9bfd78d5fa39ceddd7008495b006da739b",
+      "ui/s2_00d7aec837f3_c0006_27_missions.txt": "b76fa49428aca4aebf429865d5409bb55c2a4aed51deb9e5bd8e02eb3bf957ce",
+      "ui/s2_00d7aec837f3_c0007_23.png": "8c4c6a9741a656d99371979bfb8f68d1ebaad6d66ae51122d76480f2fbe64448",
+      "ui/s2_00d7aec837f3_c0007_23.json": "dddf0aad64ca1a0797ceeb62bafbba4f835f6af2ddd066f1977f07c0a61cfcb5",
+      "ui/s2_00d7aec837f3_c0007_31_missions.txt": "8b40d57685e0bb1d5c2198528a4c196fa368fbdb04e570831124b0b541f4e2f7",
+      "ui/s2_00d7aec837f3_c0008_26.png": "c0efa57cf4839f03ad586444038df07d29d18fac455b1436ee3ac16464dbe325",
+      "ui/s2_00d7aec837f3_c0008_26.json": "8b800c597c2117def7d2c1f50281fc14cccc452c10cd0f7b1dab36af6c850d6f",
+      "ui/s2_00d7aec837f3_c0008_35_missions.txt": "94880574a5fac0da949a0ffa2403e489cc01acf4970a2ceb570f30a8f488188e",
+      "ui/s2_00d7aec837f3_c0009_29.png": "78bdf04094276b7c662c0ba85c13cd54d047afe7e76a68f7a2192f2b915212ff",
+      "ui/s2_00d7aec837f3_c0009_29.json": "d32d505bc89e0e0f1b278f0950a7ccf596a1e76c939ac6f83b5720d805da0d2e",
+      "ui/s2_00d7aec837f3_c0009_39_missions.txt": "6fa20693023adf09878eb4e25c372205d5d8e15d588fddeba415e6dcd67ba1ad",
+      "ui/s2_00d7aec837f3_c0010_32.png": "07400fea3e62632b1c1be0e4ad64a40652ebe874e800a6f2c3b0dfc70dc1fbb0",
+      "ui/s2_00d7aec837f3_c0010_32.json": "6647891579618a441ea732afd79e37827b565003e17e98a647131fb33063a363",
+      "ui/s2_00d7aec837f3_c0010_43_missions.txt": "db772b12af1a35b155062413cb384a06465b141283243ead60d4f9f9e6755852"
+    },
+    "kernel_evidence": {
+      "kernel_dmesg/s2_00d7aec837f3_c0000.json": "0bf4c8ca890bbaf010b1e4f23b531844d28d421fb8348715bad7fd9e23b2bcea",
+      "kernel_dmesg/s2_00d7aec837f3_c0001.json": "acd90ad91ef811f15924303b428749b421c968188697e4fcddd91fb2cc25630a",
+      "kernel_dmesg/s2_00d7aec837f3_c0002.json": "61825c4c18cd848648318d5a97bfa6d5dd71ea2781e72a620d4850caa37a67fd",
+      "kernel_dmesg/s2_00d7aec837f3_c0003.json": "e0b6bbac2827ce497f07923c5dec0efbb93f768ebcb7a37c14b6ee649c0da1a2",
+      "kernel_dmesg/s2_00d7aec837f3_c0004.json": "e6dfaea63f2a206515817f401f9fe17bfcf0cc00ae43a6d8abff543137e0e6dc",
+      "kernel_dmesg/s2_00d7aec837f3_c0005.json": "0e2959f7922aae429f6ac5f8961ed12114bd445ae982535f97571770984794be",
+      "kernel_dmesg/s2_00d7aec837f3_c0006.json": "68a4484066fe32e6ffdf922694bbcc24de1a332e887f14e653feca895ef1b026",
+      "kernel_dmesg/s2_00d7aec837f3_c0007.json": "5d628e4a0dd41e07a5c4bc4fca2e7d9f0c236389bf58103057bc8d4b25ef130c",
+      "kernel_dmesg/s2_00d7aec837f3_c0008.json": "8554772b637c58e5a8a4e344dcdd47fce02cd62d3abed4b7667474fa9c86d35b",
+      "kernel_dmesg/s2_00d7aec837f3_c0009.json": "cfac1723fcc59c9025d5c3c5061745ccd3c36ba935a5c39d8e194451b41c20d5",
+      "kernel_dmesg/s2_00d7aec837f3_c0010.json": "75b0c99df69d477b77f74ee6521b688e7cef72af57928a0f6d940c84e7d6efba",
+      "kernel_dmesg.raw.log": "e487e4fefd7589ad4ebe9843f503b602e55a5c768ae4e461eb99593649d58493"
+    }
+  },
+  "prevalidation_only": true
+}

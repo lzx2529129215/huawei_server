@@ -1,0 +1,1 @@
+"""HarmonyOS application memory scenarios."""

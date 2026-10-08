@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "hdc": "D:\\Lzx\\deveco studio\\dev eco\\DevEco Studio\\sdk\\default\\openharmony\\toolchains\\hdc.exe",
+  "device": "3QC0124C03000514",
+  "dram_gib": 32,
+  "version_label": "current-32gb",
+  "real_apps": {
+    "腾讯会议": {
+      "bundle": "com.tencent.meeting.app",
+      "module": "application",
+      "ability": "NXHostUIAbility"
+    },
+    "浏览器": {
+      "bundle": "com.huawei.hmos.browser",
+      "module": "entry",
+      "ability": "MainAbility"
+    },
+    "海泰浏览器": {
+      "bundle": "com.haitai.htbrowser",
+      "module": "pc_entry",
+      "ability": "EntryAbility"
+    },
+    "文件管理器": {
+      "bundle": "com.huawei.hmos.filemanager",
+      "module": "pc",
+      "ability": "MainAbility"
+    },
+    "WPS": {
+      "bundle": "cn.wps.office.hap",
+      "module": "prome",
+      "ability": "PromeAbility"
+    },
+    "应用市场": {
+      "bundle": "com.huawei.hmsapp.appgallery",
+      "module": "entry",
+      "ability": "MainAbility"
+    }
+  },
+  "test_apps": [
+    "io.memscene.workload.a1",
+    "io.memscene.workload.a2",
+    "io.memscene.workload.a3",
+    "io.memscene.workload.a4",
+    "io.memscene.workload.a5",
+    "io.memscene.workload.a6",
+    "io.memscene.workload.a7",
+    "io.memscene.workload.a8"
+  ],
+  "scene1": {
+    "background_mib_per_app": 6144,
+    "file_ratio": 0.0,
+    "pressure_mib": 16384,
+    "pressure_wait_seconds": 10,
+    "allocation_timeout_seconds": 600,
+    "lifetime_seconds": 1800,
+    "swipe": [
+      1560,
+      1500,
+      1560,
+      700,
+      350
+    ]
+  },
+  "scene2": {
+    "daily_mib": 256,
+    "peak_mib": 5120,
+    "hold_seconds": 60,
+    "ready_timeout_seconds": 360,
+    "lifetime_seconds": 480,
+    "case_cycles": 1,
+    "seed": 20261005,
+    "calibration_peak_mib_levels": [
+      5120
+    ],
+    "baseline_min_events": 100
+  },
+  "popup_text_patterns": [
+    "内存不足",
+    "低内存",
+    "low memory",
+    "not enough memory",
+    "insufficient memory"
+  ]
+}

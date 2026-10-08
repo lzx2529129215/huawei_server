@@ -1,0 +1,23 @@
+[Unit]
+Description=MemShift experimental proactive memory reclaim controller
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/memshift/bin/memshiftd --config /etc/memshift/memshift.ini --apply
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=memshift
+RuntimeDirectoryMode=0750
+LogsDirectory=memshift
+LogsDirectoryMode=0750
+UMask=0027
+Nice=5
+NoNewPrivileges=true
+# Intentionally do not make cgroupfs read-only; memory.reclaim must be writable.
+# A blocked kernel reclaim syscall has no guaranteed userspace cancellation latency.
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

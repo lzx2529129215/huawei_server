@@ -1,0 +1,268 @@
+boottime_s=129371.634975312 monotonic_s=112194.816127187 realtime_s=1791377851.223767757 proc_uptime_s=112194.810000000
+AA_BEGIN
+User ID #100
+  current mission lists:{
+    Mission ID #666  mission name #[#com.tencent.meeting.app:application:NXHostUIAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #7817
+        app name [com.tencent.meeting.app]
+        main name [NXHostUIAbility]
+        bundle name [com.tencent.meeting.app]
+        ability type [PAGE]
+        state #FOREGROUND  start time [96806556]
+        app state #FOREGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+    Mission ID #667  mission name #[#com.huawei.hmos.browser:entry:MainAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #7820
+        app name [com.huawei.hmos.browser]
+        main name [MainAbility]
+        bundle name [com.huawei.hmos.browser]
+        ability type [PAGE]
+        state #FOREGROUND  start time [96837094]
+        app state #FOREGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+    Mission ID #690  mission name #[#com.huawei.hmos.taskmanager:manager:LowMemoryAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #8703
+        app name [com.huawei.hmos.taskmanager]
+        main name [LowMemoryAbility]
+        bundle name [com.huawei.hmos.taskmanager]
+        ability type [PAGE]
+        state #FOREGROUND  start time [109119346]
+        app state #FOREGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+    Mission ID #668  mission name #[#com.haitai.htbrowser:pc_entry:EntryAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #7825
+        app name [com.haitai.htbrowser]
+        main name [EntryAbility]
+        bundle name [com.haitai.htbrowser]
+        ability type [PAGE]
+        state #FOREGROUND  start time [96897575]
+        app state #FOREGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+    Mission ID #669  mission name #[#com.huawei.hmos.filemanager:pc:MainAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #7828
+        app name [com.huawei.hmos.filemanager]
+        main name [MainAbility]
+        bundle name [com.huawei.hmos.filemanager]
+        ability type [PAGE]
+        state #FOREGROUND  start time [96931174]
+        app state #FOREGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+    Mission ID #670  mission name #[#cn.wps.office.hap:prome:PromeAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #7872
+        app name [cn.wps.office.hap]
+        main name [PromeAbility]
+        bundle name [cn.wps.office.hap]
+        ability type [PAGE]
+        state #FOREGROUND  start time [97041326]
+        app state #FOREGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+    Mission ID #672  mission name #[#cn.wps.office.hap:wpscloudsvr:WpsCloudSvrAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #7874
+        app name [cn.wps.office.hap]
+        main name [WpsCloudSvrAbility]
+        bundle name [cn.wps.office.hap]
+        ability type [PAGE]
+        state #FOREGROUND  start time [97042186]
+        app state #FOREGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+    Mission ID #673  mission name #[#com.huawei.hmsapp.appgallery:entry:MainAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #7877
+        app name [com.huawei.hmsapp.appgallery]
+        main name [MainAbility]
+        bundle name [com.huawei.hmsapp.appgallery]
+        ability type [PAGE]
+        state #FOREGROUND  start time [97073022]
+        app state #FOREGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+    Mission ID #696  mission name #[#io.memscene.scene4.workload.a1:entry:EntryAbility]  lockedState #0  mission affinity #[]
+      AbilityRecord ID #8906
+        app name [io.memscene.scene4.workload.a1]
+        main name [EntryAbility]
+        bundle name [io.memscene.scene4.workload.a1]
+        ability type [PAGE]
+        state #BACKGROUND  start time [112056896]
+        app state #BACKGROUND
+        ready #1  window attached #0  launcher #0
+        callee connections: 
+        isKeepAlive: false
+ }
+WIN_BEGIN
+
+-------------------------------[ability]-------------------------------
+
+
+----------------------------------WindowManagerService----------------------------------
+-------------------------------------ScreenGroup 0-------------------------------------
+WindowName           DisplayId Pid     WinId Type Mode Flag ZOrd Orientation [ x    y    w    h    ] [ OffsetX OffsetY ] [ ScaleX  ScaleY  PivotX  PivotY  ]
+SCBScenePanel1       0         4470    3     2109 1    0    100  0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBWallpaper3        0         4470    5     2000 1    0    1    0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBDesktop4          0         4470    7     2001 1    0    2    0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBSmartDock6        0         4470    9     2116 1    0    902  0           [ 0    1955 3120 125  ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBCompanionView7    0         4470    12    2116 1    0    903  0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBFormCenter16      0         4470    21    2135 1    0    2002 0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBGestureBack18     0         4470    23    2111 1    0    4102 0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+app0                 0         62568   666   1    102  0    114  0           [ 203  203  2091 1406 ] [ 0       0       ] [ 1       1       0.4998570.5     ]
+browser0             0         63309   667   1    102  0    115  0           [ 515  281  2090 1394 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+htbrowser0           0         65214   668   1    102  0    110  0           [ 581  347  2091 1394 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+filemanager0         0         62005   669   1    102  0    111  0           [ 941  475  2090 1394 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+hap0                 0         6264    670   1    102  0    112  0           [ 481  561  2091 1394 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+appgallery0          0         7520    673   1    102  0    113  0           [ 730  321  2090 1368 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+low_mem_float_win    0         29054   691   2106 102  0    925  0           [ 1104 446  912  1064 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+---------------------------------------------------------------------------------------
+SCBSpecialScenePanel 0         4470    4     2109 1    0    -1   0           [ 0    0    0    0    ] [ 0       0       ] [ 1       1       0       0       ]
+SCBSmartDockMask5    0         4470    8     2116 1    0    -1   0           [ 0    2070 3120 11   ] [ 0       0       ] [ 1       1       0       0       ]
+SCBKeyboardPanel     0         4470    11    2134 1    0    -1   0           [ 0    0    0    0    ] [ 0       0       ] [ 1       1       0       0       ]
+SCBPopupPanel8       0         4470    13    2109 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBSysDialogDefault9 0         4470    14    2104 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBDialogView10      0         4470    15    2116 1    0    -1   0           [ 1180 381  759  1318 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBEnterpriseDisallo 0         4470    16    2106 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBDesktopSwitcher12 0         4470    17    2135 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBScreenLock13      0         4470    18    2110 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBScreenLockWifiPan 0         4470    19    2127 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBSpacesDesktopSwit 0         4470    20    2135 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBSysDialogUpper17  0         4470    22    2104 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBSystemTopPanel19  0         4470    24    2111 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+SCBScreenModeChangeM 0         4470    25    2110 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBBannerNotificatio 0         4470    26    2106 1    0    -1   0           [ 2307 1355 813  600  ] [ 0       0       ] [ 1       1       0       0       ]
+SCBMicReminder22     0         4470    27    2109 1    0    -1   0           [ 1180 1673 759  167  ] [ 0       0       ] [ 1       1       0       0       ]
+SCBBrightnessPanel23 0         4470    28    2109 1    0    -1   0           [ 1264 1770 593  61   ] [ 0       0       ] [ 1       1       0       0       ]
+SCBShortcutkeyPanel2 0         4470    29    2109 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBVolumePanel25     0         4470    30    2111 1    0    -1   0           [ 1264 1770 593  61   ] [ 0       0       ] [ 1       1       0       0       ]
+SCBshutdownView26    0         4470    31    2116 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+ForceExtensionCompon 0         4470    32    2109 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBCtrlAltDelPanel28 0         4470    33    2109 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBCloneWallpaper29  0         4470    34    2000 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+WALLPAPER_CLONE30    0         4470    35    2109 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBPrivacyIndicator3 0         4470    36    2127 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_tray32    0         4470    37    2109 1    0    -1   0           [ 2369 1818 520  121  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_edit_mode 0         4470    38    2109 1    0    -1   0           [ 1218 372  683  1210 ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_control_c 0         4470    39    2109 1    0    -1   0           [ 2417 583  688  1357 ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_notificat 0         4470    40    2109 1    0    -1   0           [ 1786 -616 1380 2616 ] [ 0       0       ] [ 1       1       0       0       ]
+SCBAssemblyPanel36   0         4470    41    2109 1    0    -1   0           [ 0    0    0    0    ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_sound_pan 0         4470    42    2111 1    0    -1   0           [ 2421 1020 684  920  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_battery_p 0         4470    43    2109 1    0    -1   0           [ 2417 1605 688  334  ] [ 0       0       ] [ 1       1       0       0       ]
+status_celia_panel39 0         4470    44    2109 1    0    -1   0           [ 0    0    623  91   ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_input_met 0         4470    45    2109 1    0    -1   0           [ 2417 1502 688  437  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_input_pan 0         4470    46    2109 1    0    -1   0           [ 2417 1431 688  508  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_microphon 0         4470    47    2109 1    0    -1   0           [ 2282 1273 684  666  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_wifi_pane 0         4470    48    2109 1    0    -1   0           [ 2417 1713 688  226  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_bluetooth 0         4470    49    2109 1    0    -1   0           [ 2417 1713 688  226  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_location4 0         4470    50    2109 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+SLOT_CONTROL_PRIVACY 0         4470    51    2109 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_super_pri 0         4470    52    2109 1    0    -1   0           [ 0    0    683  395  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_pc_usb48  0         4470    53    2109 1    0    -1   0           [ 2369 1827 688  112  ] [ 0       0       ] [ 1       1       0       0       ]
+SCBGestureBar49      0         4470    54    2109 1    0    -1   0           [ 0    0    3120 17   ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_capsule_k 0         4470    55    2109 1    0    -1   0           [ 2369 1618 688  321  ] [ 0       0       ] [ 1       1       0       0       ]
+plugin_status_bar_hu 0         4470    56    2109 1    0    -1   0           [ 2369 1936 688  4    ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_quick_not 0         4470    57    2109 1    0    -1   0           [ 2369 1328 688  612  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_display_m 0         4470    58    2109 1    0    -1   0           [ 2369 1727 688  213  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_focus_mod 0         4470    59    2109 1    0    -1   0           [ 2369 1727 688  213  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_hotspot_p 0         4470    60    2109 1    0    -1   0           [ 2369 1710 688  230  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_pc_spoole 0         4470    61    2109 1    0    -1   0           [ 2369 1578 688  361  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_assistant 0         4470    62    2109 1    0    -1   0           [ 2369 1062 688  878  ] [ 0       0       ] [ 1       1       0       0       ]
+status_bar_pc_myinje 0         4470    63    2109 1    0    -1   0           [ 2369 1814 688  125  ] [ 0       0       ] [ 1       1       0       0       ]
+SCBAppCenterView59   0         4470    64    2116 1    0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0       0       ]
+ARK_APP_SUBWINDOW_En 0         4470    560   2128 102  0    -1   0           [ 0    0    3120 2080 ] [ 0       0       ] [ 1       1       0.5     0.5     ]
+53788902168          0         4470    671   2109 1    0    -1   0           [ 2369 1749 688  190  ] [ 0       0       ] [ 1       1       0       0       ]
+a10                  0         51731   696   1    102  0    -1   0           [ 582  348  2090 1394 ] [ 0       0       ] [ 1       1       0.5000960.499857]
+Focus window: 667
+All Focus window: 
+DisplayId: 0 WindowId: 667
+SingleHand: X[0] Y[0] scale[1]
+Total window num: 72
+Highlighted windows: 667
+WIN_END
+boottime_s=129371.872566562 monotonic_s=112195.053718437 realtime_s=1791377851.461359024 proc_uptime_s=112195.050000000
+PROC_BEGIN
+io.memscene.scene4.workload.a1Name:	ne4.workload.a1
+Umask:	0002
+State:	S (sleeping)
+Tgid:	51731
+Ngid:	0
+Pid:	51731
+PPid:	715
+TracerPid:	0
+Uid:	20020188	20020188	20020188	20020188
+Gid:	20020188	20020188	20020188	20020188
+FDSize:	0
+Groups:	3099
+NStgid:	51731
+NSpid:	51731
+NSpgid:	51731
+NSsid:	1
+VmPeak:	 8478852 kB
+VmSize:	 8478792 kB
+VmLck:	       0 kB
+VmPin:	       0 kB
+VmHWM:	 3267212 kB
+VmRSS:	 2310980 kB
+RssAnon:	 2245660 kB
+RssFile:	   65308 kB
+RssShmem:	      12 kB
+VmData:	 5006884 kB
+VmStk:	    8192 kB
+VmExe:	      88 kB
+VmLib:	  316100 kB
+VmPTE:	    7916 kB
+VmSwap:	 1021500 kB
+VmKobj:	     124 kB
+PurgSum:	       0 kB
+PurgPin:	       0 kB
+HugetlbPages:	       0 kB
+Threads:	25
+SigQ:	0/100796
+SigPnd:	0000000000000000
+ShdPnd:	0000000000000000
+SigBlk:	0000000400001000
+SigIgn:	0000000200001000
+SigCgt:	00001a5c400084fa
+CapInh:	000000000000000a
+CapPrm:	000000000000000a
+CapEff:	000000000000000a
+CapBnd:	000000ffffffffff
+CapAmb:	000000000000000a
+NoNewPrivs:	0
+Seccomp:	2
+Seccomp_filters:	1
+Cpus_allowed:	ff
+Cpus_allowed_list:	0,1,2,3,4,5,6,7
+Mems_allowed:	00000000
+Mems_allowed_list:	0
+voluntary_ctxt_switches:	1794
+nonvoluntary_ctxt_switches:	333
+51731 (ne4.workload.a1) S 715 1 1 0 0 0 211909 211909 13768 13768 5212 101 0 0 10 -10 25 0 12922496 8682283008 577745 0 0 0 544225376800 0 0 0 0 0 0 0 255375 0 0 7 0 0 0 0 0 374545081360 374545088720 381999071232 544225377482 544225377757 544225377757 544225378256 0 0
+1:freezer:/Frozen
+2:pids:/100/io.memscene.scene4.workload.a1/app_51731
+3:cpuset:/nap-background
+4:memory:/100/io.memscene.scene4.workload.a1_20020188
+5:cpu:/nap-background
+6:load:/nap-background
+7:iolimit:/
+8:workingset:/
+9:dummy:/
+PROC_END
+JOURNAL_BEGIN
+{"event":"donor_background_heartbeat","case_id":"s4_c0ffee03_single1_l1","pid":51731,"uid":20020188,"start_ticks":12922496,"monotonic_ns":129353255016094,"boottime_ns":129353255016094,"time_ms":1791377832844,"phase":"ready","anon_bytes":3221225472,"file_bytes":0,"touched_bytes":3221225472,"cold_start_mode":true,"donor_mode":true,"file_synced_bytes":0,"ready_bytes":3221225472,"peak_bytes":3221225472,"donor_expected_checksum":10346362110739320499,"donor_observed_checksum":0,"donor_validation_minor_before":0,"donor_validation_minor_after":0,"donor_validation_major_before":0,"donor_validation_major_after":0,"donor_validation_complete":false,"donor_initial_read_checksum":10346362110739320499,"donor_initial_read_minor_before":210441,"donor_initial_read_minor_after":211117,"donor_initial_read_major_before":12988,"donor_initial_read_major_after":13146,"donor_initial_read_complete":true,"donor_heartbeat_sequence":4,"memory_ready":true,"window_ready":true,"minor":211764,"major":13768,"errno":0,"level":4}
+{"event":"donor_background_heartbeat","case_id":"s4_c0ffee03_single1_l1","pid":51731,"uid":20020188,"start_ticks":12922496,"monotonic_ns":129354280428750,"boottime_ns":129354280428750,"time_ms":1791377833870,"phase":"ready","anon_bytes":3221225472,"file_bytes":0,"touched_bytes":3221225472,"cold_start_mode":true,"donor_mode":true,"file_synced_bytes":0,"ready_bytes":3221225472,"peak_bytes":3221225472,"donor_expected_checksum":10346362110739320499,"donor_observed_checksum":0,"donor_validation_minor_before":0,"donor_validation_minor_after":0,"donor_validation_major_before":0,"donor_validation_major_after":0,"donor_validation_complete":false,"donor_initial_read_checksum":10346362110739320499,"donor_initial_read_minor_before":210441,"donor_initial_read_minor_after":211117,"donor_initial_read_major_before":12988,"donor_initial_read_major_after":13146,"donor_initial_read_complete":true,"donor_heartbeat_sequence":5,"memory_ready":true,"window_ready":true,"minor":211765,"major":13768,"errno":0,"level":5}
+{"event":"donor_background_heartbeat","case_id":"s4_c0ffee03_single1_l1","pid":51731,"uid":20020188,"start_ticks":12922496,"monotonic_ns":129355315680156,"boottime_ns":129355315680156,"time_ms":1791377834905,"phase":"ready","anon_bytes":3221225472,"file_bytes":0,"touched_bytes":3221225472,"cold_start_mode":true,"donor_mode":true,"file_synced_bytes":0,"ready_bytes":3221225472,"peak_bytes":3221225472,"donor_expected_checksum":10346362110739320499,"donor_observed_checksum":0,"donor_validation_minor_before":0,"donor_validation_minor_after":0,"donor_validation_major_before":0,"donor_validation_major_after":0,"donor_validation_complete":false,"donor_initial_read_checksum":10346362110739320499,"donor_initial_read_minor_before":210441,"donor_initial_read_minor_after":211117,"donor_initial_read_major_before":12988,"donor_initial_read_major_after":13146,"donor_initial_read_complete":true,"donor_heartbeat_sequence":6,"memory_ready":true,"window_ready":true,"minor":211765,"major":13768,"errno":0,"level":6}
+{"event":"donor_background_heartbeat","case_id":"s4_c0ffee03_single1_l1","pid":51731,"uid":20020188,"start_ticks":12922496,"monotonic_ns":129356350998125,"boottime_ns":129356350998125,"time_ms":1791377835940,"phase":"ready","anon_bytes":3221225472,"file_bytes":0,"touched_bytes":3221225472,"cold_start_mode":true,"donor_mode":true,"file_synced_bytes":0,"ready_bytes":3221225472,"peak_bytes":3221225472,"donor_expected_checksum":10346362110739320499,"donor_observed_checksum":0,"donor_validation_minor_before":0,"donor_validation_minor_after":0,"donor_validation_major_before":0,"donor_validation_major_after":0,"donor_validation_complete":false,"donor_initial_read_checksum":10346362110739320499,"donor_initial_read_minor_before":210441,"donor_initial_read_minor_after":211117,"donor_initial_read_major_before":12988,"donor_initial_read_major_after":13146,"donor_initial_read_complete":true,"donor_heartbeat_sequence":7,"memory_ready":true,"window_ready":true,"minor":211765,"major":13768,"errno":0,"level":7}
+{"event":"donor_background_heartbeat","case_id":"s4_c0ffee03_single1_l1","pid":51731,"uid":20020188,"start_ticks":12922496,"monotonic_ns":129357383018437,"boottime_ns":129357383018437,"time_ms":1791377836972,"phase":"ready","anon_bytes":3221225472,"file_bytes":0,"touched_bytes":3221225472,"cold_start_mode":true,"donor_mode":true,"file_synced_bytes":0,"ready_bytes":3221225472,"peak_bytes":3221225472,"donor_expected_checksum":10346362110739320499,"donor_observed_checksum":0,"donor_validation_minor_before":0,"donor_validation_minor_after":0,"donor_validation_major_before":0,"donor_validation_major_after":0,"donor_validation_complete":false,"donor_initial_read_checksum":10346362110739320499,"donor_initial_read_minor_before":210441,"donor_initial_read_minor_after":211117,"donor_initial_read_major_before":12988,"donor_initial_read_major_after":13146,"donor_initial_read_complete":true,"donor_heartbeat_sequence":8,"memory_ready":true,"window_ready":true,"minor":211765,"major":13768,"errno":0,"level":8}
+{"event":"donor_background_heartbeat","case_id":"s4_c0ffee03_single1_l1","pid":51731,"uid":20020188,"start_ticks":12922496,"monotonic_ns":129358414424062,"boottime_ns":129358414424062,"time_ms":1791377838003,"phase":"ready","anon_bytes":3221225472,"file_bytes":0,"touched_bytes":3221225472,"cold_start_mode":true,"donor_mode":true,"file_synced_bytes":0,"ready_bytes":3221225472,"peak_bytes":3221225472,"donor_expected_checksum":10346362110739320499,"donor_observed_checksum":0,"donor_validation_minor_before":0,"donor_validation_minor_after":0,"donor_validation_major_before":0,"donor_validation_major_after":0,"donor_validation_complete":false,"donor_initial_read_checksum":10346362110739320499,"donor_initial_read_minor_before":210441,"donor_initial_read_minor_after":211117,"donor_initial_read_major_before":12988,"donor_initial_read_major_after":13146,"donor_initial_read_complete":true,"donor_heartbeat_sequence":9,"memory_ready":true,"window_ready":true,"minor":211766,"major":13768,"errno":0,"level":9}
+{"event":"donor_background_heartbeat","case_id":"s4_c0ffee03_single1_l1","pid":51731,"uid":20020188,"start_ticks":12922496,"monotonic_ns":129359442795469,"boottime_ns":129359442795469,"time_ms":1791377839032,"phase":"ready","anon_bytes":3221225472,"file_bytes":0,"touched_bytes":3221225472,"cold_start_mode":true,"donor_mode":true,"file_synced_bytes":0,"ready_bytes":3221225472,"peak_bytes":3221225472,"donor_expected_checksum":10346362110739320499,"donor_observed_checksum":0,"donor_validation_minor_before":0,"donor_validation_minor_after":0,"donor_validation_major_before":0,"donor_validation_major_after":0,"donor_validation_complete":false,"donor_initial_read_checksum":10346362110739320499,"donor_initial_read_minor_before":210441,"donor_initial_read_minor_after":211117,"donor_initial_read_major_before":12988,"donor_initial_read_major_after":13146,"donor_initial_read_complete":true,"donor_heartbeat_sequence":10,"memory_ready":true,"window_ready":true,"minor":211866,"major":13768,"errno":0,"level":10}
+{"event":"donor_background_heartbeat","case_id":"s4_c0ffee03_single1_l1","pid":51731,"uid":20020188,"start_ticks":12922496,"monotonic_ns":129360471126562,"boottime_ns":129360471126562,"time_ms":1791377840060,"phase":"ready","anon_bytes":3221225472,"file_bytes":0,"touched_bytes":3221225472,"cold_start_mode":true,"donor_mode":true,"file_synced_bytes":0,"ready_bytes":3221225472,"peak_bytes":3221225472,"donor_expected_checksum":10346362110739320499,"donor_observed_checksum":0,"donor_validation_minor_before":0,"donor_validation_minor_after":0,"donor_validation_major_before":0,"donor_validation_major_after":0,"donor_validation_complete":false,"donor_initial_read_checksum":10346362110739320499,"donor_initial_read_minor_before":210441,"donor_initial_read_minor_after":211117,"donor_initial_read_major_before":12988,"donor_initial_read_major_after":13146,"donor_initial_read_complete":true,"donor_heartbeat_sequence":11,"memory_ready":true,"window_ready":true,"minor":211893,"major":13768,"errno":0,"level":11}

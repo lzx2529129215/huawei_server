@@ -1,0 +1,296 @@
+{
+  "enable_demonstrated_workflows": true,
+  "device_id": "3QC0124C11000839",
+  "hdc_path": "tools\\hdc.exe",
+  "screen": {
+    "width": 1642,
+    "height": 1094,
+    "physical_width": 3120,
+    "physical_height": 2080,
+    "display_id": 0
+  },
+  "readiness": {
+    "screenshot_samples": 3,
+    "interval_ms": 450,
+    "pixel_delta_threshold": 12,
+    "max_changed_ratio": 0.02,
+    "max_mean_delta": 3.0,
+    "downsample_width": 320,
+    "crop_bottom_px": 140,
+    "cache_seconds": 0
+  },
+  "scroll": {
+    "x": 821,
+    "start_y": 850,
+    "end_y": 250,
+    "velocity": 800
+  },
+  "app_scroll_calibration": {
+    "default": {"x": 1560, "top": 450, "bottom": 1650, "velocity": 800},
+    "腾讯会议": {"x": 1560, "top": 520, "bottom": 1650, "velocity": 700},
+    "腾讯文档": {"x": 1700, "top": 500, "bottom": 1650, "velocity": 700},
+    "QQ音乐": {"x": 1700, "top": 500, "bottom": 1600, "velocity": 700},
+    "抖音": {"x": 1700, "top": 500, "bottom": 1600, "velocity": 700},
+    "小艺": {"x": 1700, "top": 500, "bottom": 1600, "velocity": 700},
+    "备忘录": {"x": 1800, "top": 500, "bottom": 1600, "velocity": 700},
+    "WPS": {"x": 700, "top": 450, "bottom": 1500, "velocity": 600}
+    ,"应用市场": {"x": 1800, "top": 500, "bottom": 1650, "velocity": 700}
+  },
+  "douyin_calibration": {
+    "recommend": [445, 473],
+    "first_live": [1200, 700],
+    "comments": [2500, 1160],
+    "close_comments": [2660, 500],
+    "live_scroll": {"x": 1700, "top": 500, "bottom": 1500},
+    "recommend_scroll": {"x": 1700, "top": 500, "bottom": 1500},
+    "comments_scroll": {"x": 2450, "top": 650, "bottom": 1500}
+  },
+  "xunlei_calibration": {"plus": [2945, 122]},
+  "feishu_calibration": {"share": [1490, 1600]},
+  "browser_tencent_upload": {"choose_file": [1560, 1115], "picker_search": [2585, 250]},
+  "tencent_docs_calibration": {
+    "documents": [
+      "日期",
+      "2026年硕士生招录情况登记表",
+      "暑假留校离校情况统计",
+      "LOL安排表",
+      "26级新进博士摸底",
+      "PPT汇报题目统计",
+      "110服务器申请表",
+      "离校统计"
+    ]
+  },
+  "browser_calibration": {
+    "x": 1600,
+    "top": 500,
+    "bottom": 1650,
+    "velocity": 800,
+    "verified_sites": [
+      "https://www.163.com/",
+      "https://www.vcg.com/",
+      "https://www.bilibili.com/",
+      "https://www.douyu.com/"
+    ]
+  },
+  "haitai_content_calibration": {
+    "x": 1600,
+    "top": 500,
+    "bottom": 1650,
+    "velocity": 800,
+    "page_load_wait": 15,
+    "verified_sites": [
+      "https://www.vmall.com/",
+      "https://live.bilibili.com/"
+    ]
+  },
+  "gallery_calibration": {
+    "x": 1700,
+    "top": 500,
+    "bottom": 1500,
+    "velocity": 600
+  },
+  "jianying_calibration": {
+    "start_creation": [1750, 300],
+    "import": [735, 346],
+    "picker_search": [2580, 250],
+    "play": [1890, 1067],
+    "export_open": [3038, 104],
+    "fps_dropdown": [1970, 968],
+    "fps_60": [1878, 1397],
+    "export_confirm": [1918, 1645]
+  },
+  "wukong_calibration": {
+    "canvas": [1300, 900],
+    "first_tab": [760, 456],
+    "add_object": [2205, 483],
+    "sidebar_x": 2078,
+    "animation": [2077, 883],
+    "first_animation": [2350, 745],
+    "image": [2077, 560],
+    "open_image_file": [2210, 760],
+    "file_menu": [647, 315],
+    "save_as": [700, 848]
+  },
+  "xiaoyi_calibration": {
+    "local_ai_toggle": [1568, 853]
+  },
+  "task_center": {
+    "x": 1082,
+    "y": 2015
+  },
+  "app_center": {
+    "x": 980,
+    "y": 2015
+  },
+  "wps_calibration": {
+    "ppt_filename": "1Gppt.pptx",
+    "excel_filename": "Excel_100M_1.xlsx",
+    "word_filename": "1Gword.docx",
+    "home_tab": [150, 40],
+    "home_open": [420, 375],
+    "download_nav": [665, 1108],
+    "ppt_file": [1235, 1154],
+    "document_file": [1235, 1154],
+    "file_positions": {
+      "1Gppt.pptx": [1235, 1154],
+      "1Gword.docx": [1235, 1212],
+      "Excel_100M_1.xlsx": [1235, 1270]
+    },
+    "dialog_open": [2303, 1664],
+    "large_open_wait": 8,
+    "outline_x": 250,
+    "outline_top": 600,
+    "outline_bottom": 1600,
+    "document_x": 1600,
+    "document_top": 500,
+    "document_bottom": 1650
+    ,
+    "font_dropdown": [695, 203],
+    "font_song_body": [520, 572],
+    "slideshow_tab": [1400, 115],
+    "slideshow_from_start": [865, 210]
+    ,
+    "ppt_tab": [1235, 40]
+  },
+  "apps": {
+    "浏览器": {
+      "bundle": "com.huawei.hmos.browser",
+      "module": "entry",
+      "ability": "MainAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "海泰浏览器": {
+      "bundle": "com.haitai.htbrowser",
+      "module": "pc_entry",
+      "ability": "EntryAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "文件管理器": {
+      "bundle": "com.huawei.hmos.filemanager",
+      "module": "pc",
+      "ability": "MainAbility",
+      "ready_anchor": {"field": "id", "value": "FileManager_RightBarKey_ToolBarView", "match": "exact"}
+    },
+    "WPS": {
+      "bundle": "cn.wps.office.hap",
+      "module": "prome",
+      "ability": "PromeAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "腾讯会议": {
+      "bundle": "com.tencent.meeting.app",
+      "module": "application",
+      "ability": "NXHostUIAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "应用中心": {
+      "bundle": "com.huawei.hmsapp.appgallery",
+      "module": "entry",
+      "ability": "MainAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "应用市场": {
+      "bundle": "com.huawei.hmsapp.appgallery",
+      "module": "entry",
+      "ability": "MainAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "图库": {
+      "bundle": "com.huawei.hmos.photos",
+      "module": "pc_photos",
+      "ability": "com.huawei.hmos.photos.MainAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "剪映": {
+      "bundle": "com.lemon.lvpro",
+      "module": "JianyingPro",
+      "ability": "QAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "小艺": {
+      "bundle": "com.huawei.hmos.vassistant",
+      "module": "aioffice",
+      "ability": "AiofficeAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "好压": {
+      "bundle": "com.haozip2345.app",
+      "module": "entry",
+      "ability": "HomeAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "备忘录": {
+      "bundle": "com.huawei.hmos.notepad",
+      "module": "NotepadPhone",
+      "ability": "MainAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "飞书": {
+      "bundle": "com.ss.feishu_pc",
+      "module": "chromium",
+      "ability": "EntryAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "抖音": {
+      "bundle": "com.ss.ohpc.ugc.aweme",
+      "module": "electron",
+      "ability": "EntryAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "迅雷": {
+      "bundle": "com.xunlei.thunder",
+      "module": "entry",
+      "ability": "EntryAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "悟空图像": {
+      "bundle": "com.photosir.himirage",
+      "module": "entry",
+      "ability": "EntryAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "腾讯文档": {
+      "bundle": "com.tencent.docsohos",
+      "module": "entry",
+      "ability": "EntryAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "QQ音乐": {
+      "bundle": "com.tencent.hm.qqmusic",
+      "module": "entry",
+      "ability": "EntryAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "企业微信": {
+      "bundle": "com.tencent.wework.hmos",
+      "module": "phone",
+      "ability": "EntryAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "虚拟机": {
+      "bundle": "com.sanway.ecoengine",
+      "module": "entry",
+      "ability": "VMConsoleAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    },
+    "中望CAD": {
+      "bundle": "com.zwsoft.zwcad.PE",
+      "module": "entry",
+      "ability": "QAbility",
+      "ready_anchor": {"field": "id", "value": "EnhanceCloseBtn", "match": "exact"}
+    }
+  },
+  "keys": {
+    "ESC": "Back",
+    "返回": "Back",
+    "回车": "Enter"
+  },
+  "clicks": [
+    {
+      "app_name": "",
+      "contains": "返回上一页",
+      "x": 80,
+      "y": 80
+    }
+  ]
+}

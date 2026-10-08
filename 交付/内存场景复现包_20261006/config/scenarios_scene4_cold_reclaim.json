@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "hdc": "../tools/hdc.exe",
+  "device": "3QC0124C03000514",
+  "dram_gib": 32,
+  "version_label": "scene4_cold_reclaim_sensitivity_candidate",
+  "real_apps": {
+    "腾讯会议": {
+      "bundle": "com.tencent.meeting.app",
+      "module": "application",
+      "ability": "NXHostUIAbility"
+    },
+    "浏览器": {
+      "bundle": "com.huawei.hmos.browser",
+      "module": "entry",
+      "ability": "MainAbility"
+    },
+    "海泰浏览器": {
+      "bundle": "com.haitai.htbrowser",
+      "module": "pc_entry",
+      "ability": "EntryAbility"
+    },
+    "文件管理器": {
+      "bundle": "com.huawei.hmos.filemanager",
+      "module": "pc",
+      "ability": "MainAbility"
+    },
+    "WPS": {
+      "bundle": "cn.wps.office.hap",
+      "module": "prome",
+      "ability": "PromeAbility"
+    },
+    "应用市场": {
+      "bundle": "com.huawei.hmsapp.appgallery",
+      "module": "entry",
+      "ability": "MainAbility"
+    }
+  },
+  "test_apps": [
+    "io.memscene.scene4.workload.a1",
+    "io.memscene.scene4.workload.a2",
+    "io.memscene.scene4.workload.a3",
+    "io.memscene.scene4.workload.a4",
+    "io.memscene.scene4.workload.a5",
+    "io.memscene.scene4.workload.a6",
+    "io.memscene.scene4.workload.a7",
+    "io.memscene.scene4.workload.a8"
+  ],
+  "scene1": {
+    "background_mib_per_app": 6144,
+    "file_ratio": 0.75,
+    "pressure_mib": 12288,
+    "pressure_wait_seconds": 10,
+    "allocation_timeout_seconds": 600,
+    "lifetime_seconds": 1800,
+    "swipe": [
+      1560,
+      1500,
+      1560,
+      700,
+      350
+    ]
+  },
+  "scene2": {
+    "daily_mib": 256,
+    "peak_mib": 12288,
+    "hold_seconds": 90,
+    "ready_timeout_seconds": 600,
+    "lifetime_seconds": 720,
+    "case_cycles": 1,
+    "case_repetitions": {
+      "startup": 9,
+      "oom": 1,
+      "popup": 1
+    },
+    "seed": 20261005,
+    "calibration_peak_mib_levels": [
+      5120,
+      12288
+    ],
+    "calibration_hold_seconds": 15,
+    "case_profiles": {
+      "popup": {
+        "strategy": "foreground_popup_with_background_pressure",
+        "peak_mib": 5120,
+        "hold_seconds": 60
+      },
+      "startup": {
+        "strategy": "simultaneous_peak_during_startup",
+        "peak_mib": 12288,
+        "hold_seconds": 0
+      },
+      "oom": {
+        "strategy": "simultaneous_peak_then_hold",
+        "peak_mib": 12288,
+        "hold_seconds": 15
+      }
+    },
+    "baseline_min_events": 100
+  },
+  "popup_text_patterns": [
+    "内存不足",
+    "低内存",
+    "low memory",
+    "not enough memory",
+    "insufficient memory"
+  ],
+  "scene3": {
+    "scope": "short_diagnostic_prevalidation",
+    "daily_mib": 256,
+    "peak_mib": 12288,
+    "hold_seconds": 60,
+    "case_cycles": 1,
+    "case_repetitions": {
+      "popup": 1,
+      "startup": 1,
+      "oom": 0
+    },
+    "seed": 20261005,
+    "calibration_peak_mib_levels": [
+      5120,
+      12288
+    ],
+    "case_profiles": {
+      "popup": {
+        "strategy": "foreground_popup_with_background_pressure",
+        "peak_mib": 5120,
+        "hold_seconds": 60
+      },
+      "startup": {
+        "strategy": "simultaneous_peak_during_startup",
+        "peak_mib": 12288,
+        "hold_seconds": 0
+      }
+    },
+    "target_total_events_min": 18,
+    "target_total_events_max": 24,
+    "target_requires_all_categories": true
+  },
+  "scene3_calibration_reference": {
+    "path": "results/calibration_qualification32.json",
+    "sha256": "64a6b99fcc02a0669cabd20525eb720e97e716de6b6b64552dc8d0ceefe7543b",
+    "source_suite_hash": "e7eece713001e722180fa6ccfb51078487b4e9dea0b95bd096426f33f28f7759",
+    "peak_mib": [
+      5120,
+      12288
+    ],
+    "meaning": "reused per-app touched/ready evidence for these levels only; source is the distinct scene2 qualification suite, not a scene3 calibration and not an acceptance gate"
+  },
+  "scene4": {
+    "scope": "cold_reclaim_sensitivity_prevalidation",
+    "daily_mib": 2400,
+    "peak_mib": 5184,
+    "single_app_peak_mib": 5184,
+    "file_mib": 1200,
+    "hold_seconds": 15,
+    "calibration_hold_seconds": 15,
+    "daily_cold_seconds": 15,
+    "ready_timeout_seconds": 600,
+    "lifetime_seconds": 1200,
+    "case_cycles": 1,
+    "case_repetitions": {
+      "popup": 1,
+      "startup": 1,
+      "oom": 0
+    },
+    "seed": 20261005,
+    "case_profiles": {
+      "popup": {
+        "strategy": "foreground_popup_with_background_pressure",
+        "peak_mib": 5184,
+        "hold_seconds": 60,
+        "file_mib": 1200
+      },
+      "startup": {
+        "strategy": "simultaneous_peak_during_startup",
+        "peak_mib": 5184,
+        "hold_seconds": 15,
+        "file_mib": 1200
+      }
+    },
+    "daily_file_mib": 1200,
+    "daily_anon_mib": 1200,
+    "combined_peak_floor_ratio": 1.2,
+    "combined_peak_ceiling_ratio": 1.4,
+    "target_total_events_min": 18,
+    "target_total_events_max": 24,
+    "target_requires_all_categories": true,
+    "reclaim_evidence": {
+      "required_file_sync_event": "file_sync_complete",
+      "required_file_sync_bytes_per_app": 1258291200,
+      "required_snapshots": [
+        "daily_ready",
+        "daily_cold_end",
+        "peak_reached",
+        "hold_end"
+      ],
+      "fields": [
+        "Rss",
+        "Pss",
+        "Pss_Anon",
+        "Pss_File",
+        "RssAnon",
+        "RssFile",
+        "Private_Clean",
+        "Private_Dirty",
+        "Swap",
+        "SwapPss"
+      ],
+      "system_fields": [
+        "MemAvailable",
+        "Cached",
+        "Inactive(file)",
+        "Dirty",
+        "Writeback"
+      ],
+      "no_madvise_pageout": true
+    }
+  },
+  "scene4_calibration": {
+    "scope": "candidate_only",
+    "single_app_peak_mib": 5184,
+    "daily_mib": 2400,
+    "file_mib": 1200,
+    "hold_seconds": 15,
+    "eight_app_daily_hold_seconds": 15,
+    "not_completed": true
+  }
+}

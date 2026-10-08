@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "hdc": "../tools/hdc.exe",
+  "device": "3QC0124C03000514",
+  "dram_gib": 32,
+  "version_label": "scene3-short-diagnostic-prevalidation32",
+  "real_apps": {
+    "腾讯会议": {
+      "bundle": "com.tencent.meeting.app",
+      "module": "application",
+      "ability": "NXHostUIAbility"
+    },
+    "浏览器": {
+      "bundle": "com.huawei.hmos.browser",
+      "module": "entry",
+      "ability": "MainAbility"
+    },
+    "海泰浏览器": {
+      "bundle": "com.haitai.htbrowser",
+      "module": "pc_entry",
+      "ability": "EntryAbility"
+    },
+    "文件管理器": {
+      "bundle": "com.huawei.hmos.filemanager",
+      "module": "pc",
+      "ability": "MainAbility"
+    },
+    "WPS": {
+      "bundle": "cn.wps.office.hap",
+      "module": "prome",
+      "ability": "PromeAbility"
+    },
+    "应用市场": {
+      "bundle": "com.huawei.hmsapp.appgallery",
+      "module": "entry",
+      "ability": "MainAbility"
+    }
+  },
+  "test_apps": [
+    "io.memscene.workload.a1",
+    "io.memscene.workload.a2",
+    "io.memscene.workload.a3",
+    "io.memscene.workload.a4",
+    "io.memscene.workload.a5",
+    "io.memscene.workload.a6",
+    "io.memscene.workload.a7",
+    "io.memscene.workload.a8"
+  ],
+  "scene1": {
+    "background_mib_per_app": 6144,
+    "file_ratio": 0.75,
+    "pressure_mib": 12288,
+    "pressure_wait_seconds": 10,
+    "allocation_timeout_seconds": 600,
+    "lifetime_seconds": 1800,
+    "swipe": [
+      1560,
+      1500,
+      1560,
+      700,
+      350
+    ]
+  },
+  "scene2": {
+    "daily_mib": 256,
+    "peak_mib": 12288,
+    "hold_seconds": 90,
+    "ready_timeout_seconds": 600,
+    "lifetime_seconds": 720,
+    "case_cycles": 1,
+    "case_repetitions": {
+      "startup": 9,
+      "oom": 1,
+      "popup": 1
+    },
+    "seed": 20261005,
+    "calibration_peak_mib_levels": [
+      5120,
+      12288
+    ],
+    "calibration_hold_seconds": 15,
+    "case_profiles": {
+      "popup": {
+        "strategy": "foreground_popup_with_background_pressure",
+        "peak_mib": 5120,
+        "hold_seconds": 60
+      },
+      "startup": {
+        "strategy": "simultaneous_peak_during_startup",
+        "peak_mib": 12288,
+        "hold_seconds": 0
+      },
+      "oom": {
+        "strategy": "simultaneous_peak_then_hold",
+        "peak_mib": 12288,
+        "hold_seconds": 15
+      }
+    },
+    "baseline_min_events": 100
+  },
+  "popup_text_patterns": [
+    "内存不足",
+    "低内存",
+    "low memory",
+    "not enough memory",
+    "insufficient memory"
+  ],
+  "scene3": {
+    "scope": "short_diagnostic_prevalidation",
+    "daily_mib": 256,
+    "peak_mib": 12288,
+    "hold_seconds": 60,
+    "case_cycles": 1,
+    "case_repetitions": {
+      "popup": 1,
+      "startup": 1,
+      "oom": 0
+    },
+    "seed": 20261005,
+    "calibration_peak_mib_levels": [
+      5120,
+      12288
+    ],
+    "case_profiles": {
+      "popup": {
+        "strategy": "foreground_popup_with_background_pressure",
+        "peak_mib": 5120,
+        "hold_seconds": 60
+      },
+      "startup": {
+        "strategy": "simultaneous_peak_during_startup",
+        "peak_mib": 12288,
+        "hold_seconds": 0
+      }
+    },
+    "target_total_events_min": 18,
+    "target_total_events_max": 24,
+    "target_requires_all_categories": true
+  },
+  "scene3_calibration_reference": {
+    "path": "results/calibration_qualification32.json",
+    "sha256": "64a6b99fcc02a0669cabd20525eb720e97e716de6b6b64552dc8d0ceefe7543b",
+    "source_suite_hash": "e7eece713001e722180fa6ccfb51078487b4e9dea0b95bd096426f33f28f7759",
+    "peak_mib": [
+      5120,
+      12288
+    ],
+    "meaning": "reused per-app touched/ready evidence for these levels only; source is the distinct scene2 qualification suite, not a scene3 calibration and not an acceptance gate"
+  }
+}

@@ -1,0 +1,6 @@
+__S4_CAP_000000_CLOCK_PRE__
+boottime_s=47816.590882969 monotonic_s=47816.590883125 realtime_s=1791445545.184799194 proc_uptime_s=47816.590000000 clk_tck=100 page_size_bytes=4096
+ScreenCap saved to /data/local/tmp/memscenes_s4_0b3014fae872/scene4_s4_0b3014fae872_s4_0b3014fae872_c0001_frame_000000.png
+__S4_CAP_000000_EXIT__0
+__S4_CAP_000000_CLOCK_POST__
+boottime_s=47817.206185313 monotonic_s=47817.206185469 realtime_s=1791445545.800101519 proc_uptime_s=47817.200000000 clk_tck=100 page_size_bytes=4096

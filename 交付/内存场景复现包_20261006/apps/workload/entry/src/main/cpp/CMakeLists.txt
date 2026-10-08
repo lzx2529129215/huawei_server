@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.5)
+project(memload)
+set(CMAKE_CXX_STANDARD 17)
+add_library(memload SHARED napi_init.cpp)
+target_link_libraries(memload PUBLIC libace_napi.z.so libhilog_ndk.z.so libhitrace_ndk.z.so)

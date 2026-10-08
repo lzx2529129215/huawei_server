@@ -1,0 +1,27 @@
+boottime_s=129390.969705469 monotonic_s=112214.150857500 realtime_s=1791377870.558497906 proc_uptime_s=112214.150000000
+
+-------------------------------[ability]-------------------------------
+
+
+----------------------------------WindowManagerService----------------------------------
+WindowName: a10
+DisplayId: 0
+WinId: 696
+Pid: 51731
+Type: 1
+Mode: 102
+Flag: 0
+Orientation: 0
+FirstFrameCallbackCalled: 1
+IsVisible: false
+isRSVisible: false
+Focusable: true
+DecoStatus: true
+isPrivacyMode: false
+WindowRect: [ 582, 348, 2090, 1394 ]
+scaleX: 1
+scaleY: 1
+Offset: [ 0, 0 ]
+Scale: [ 1, 1, 0.500096, 0.499857 ]
+ParentWindowId: 0
+boottime_s=129391.037660000 monotonic_s=112214.218812031 realtime_s=1791377870.626452446 proc_uptime_s=112214.210000000
