@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
@@ -149,3 +151,46 @@ def test_default_legacy_policy_does_not_accept_pre_ready_journal_fallback():
         10.0, 110.0, 100000, 10.0, "kernel.log")
     assert result["victims_detected"] == 0
     assert book.events == []
+
+
+def peak_profile_rows(*, stage, case_id=CASE):
+    start = {"event": "startup_begin", "case_id": case_id, "pid": PID,
+             "uid": UID, "start_ticks": TICKS, "boottime_ns": 20_000_000_000}
+    daily = [start]
+    peak = []
+    if stage != "pre_ready":
+        daily.append({"event": "daily_ready", "case_id": case_id, "pid": PID,
+                      "uid": UID, "start_ticks": TICKS, "boottime_ns": 30_000_000_000})
+    if stage in ("peak_allocating", "post_peak"):
+        peak.append({"event": "peak_begin", "case_id": case_id, "pid": PID,
+                     "uid": UID, "start_ticks": TICKS, "boottime_ns": 45_000_000_000})
+    if stage == "post_peak":
+        peak.append({"event": "peak_reached", "case_id": case_id, "pid": PID,
+                     "uid": UID, "start_ticks": TICKS, "boottime_ns": 49_000_000_000})
+    # A different later PID must not shadow the exact generation being killed.
+    daily.append({"event": "startup_begin", "case_id": case_id, "pid": PID + 1,
+                  "uid": UID, "start_ticks": str(int(TICKS) + 1),
+                  "boottime_ns": 60_000_000_000})
+    return daily, peak
+
+
+@pytest.mark.parametrize(("stage", "expected_failure", "expected_stage"), [
+    ("pre_ready", 1, "pre_ready"),
+    ("before_promote", 0, "before_promote"),
+    ("peak_allocating", 1, "peak_allocating"),
+    ("post_peak", 0, "post_peak"),
+])
+def test_peak_transition_oom_classification_uses_actual_promote_and_peak_events(
+        stage, expected_failure, expected_stage):
+    daily, peak = peak_profile_rows(stage=stage)
+    book = EventBook()
+    result = book.kernel_dmesg_oom_victims(
+        dmesg(victim_s=50.05, exit_s=50.1), CASE, {}, {BUNDLE: UID},
+        {BUNDLE: peak}, 10.0, 110.0, 100000, 10.0, "kernel.log",
+        scene4_peak_transition=True, daily_attempt_rows={BUNDLE: daily},
+        daily_journal_readback_complete_bundles={BUNDLE},
+        journal_readback_complete_bundles={BUNDLE})
+    assert result["victims_detected"] == 1
+    assert result["victims"][0]["peak_transition_stage"] == expected_stage
+    assert sum(event["category"] == "oom_kill" for event in book.events) == 1
+    assert sum(event["category"] == "startup_failure" for event in book.events) == expected_failure

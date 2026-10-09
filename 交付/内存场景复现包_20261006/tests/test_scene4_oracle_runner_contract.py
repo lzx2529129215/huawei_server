@@ -52,8 +52,12 @@ from memscenes.runner import (
     _scene4_case_plan,
     _scene4_probe_mode,
     _scene4_frame_manifest_proof,
+    _scene4_readonly_observation_proof,
+    _scene4_observer_aa_inventory_complete,
+    _scene4_observer_mission_inventory_complete,
     _scene4_marker_payload,
     _scene4_frame_capture_result,
+    _scene4_advance_frame_slot,
     _scene4_frame_identity_snapshot,
     _scene4_revalidate_frame_manifest_files,
     reconcile_scene4_frame_reviews,
@@ -67,6 +71,12 @@ from memscenes.runner import (
     _scene4_cumulative_counts_observed,
     _scene4_finalize_cumulative_counts,
     _scene4_primary_count_snapshot,
+    SCENE4_V2_DONOR_SUFFIXES,
+    SCENE4_V3_DONOR_SUFFIXES,
+    _scene4_schedule_v2_header,
+    _scene4_schedule_v2_row,
+    _scene4_schedule_v3_header,
+    _scene4_schedule_v3_row,
 )
 
 
@@ -94,10 +104,20 @@ def _frame_review_pair(slot, pre, post, classification="confirmed_not_native_low
     return frame, review
 
 
+def _scene4_capture_clock_raw(slot):
+    marker = f"__S4_CAP_{slot:06d}_"
+    return (f"{marker}CLOCK_PRE__\nboottime_s=10.0 monotonic_s=10.0 realtime_s=100.0 "
+        f"proc_uptime_s=10.0 clk_tck=100 page_size_bytes=4096\n{marker}EXIT__0\n"
+        f"{marker}CLOCK_POST__\nboottime_s=10.1 monotonic_s=10.1 realtime_s=100.1 "
+        "proc_uptime_s=10.1 clk_tck=100 page_size_bytes=4096\n")
+
+
 def test_scene4_frame_review_requires_exact_case_sha_clock_and_fullscreen_negative():
     pairs = [_frame_review_pair(i, 100+i*2, 100+i*2+.7) for i in range(4)]
     frames, reviews = [x[0] for x in pairs], [x[1] for x in pairs]
-    assert _scene4_frame_manifest_proof(frames, reviews, 100, 108, case_id="c1")["complete"]
+    proof = _scene4_frame_manifest_proof(frames, reviews, 100, 108, case_id="c1")
+    assert proof["complete"]
+    assert proof["maximum_observed_gap_seconds"] == pytest.approx(2.7)
 
     wrong_case = [dict(row) for row in reviews]
     wrong_case[1]["case_id"] = "c2"
@@ -222,6 +242,135 @@ def test_scene4_unknown_gap_does_not_inflate_same_popup_episode_and_bad_slot_fai
     assert any("frame_slot_invalid" in error for error in bad["errors"])
 
 
+def _observer_row(index, pre, post, identity="no_aa_low_memory_candidate", candidates=None):
+    commands = ("wms_pre", "aa_pre", "missions_pre", "wms_post", "aa_post", "missions_post")
+    return {"case_id": "c1", "observation_index": index,
+        "boottime_pre_s": pre, "boottime_post_s": post,
+        "identity_status": identity, "native_identity_candidates": candidates or [],
+        "command_status": {name: {"exit_code": 0, "complete": True,
+            "inventory_complete": True} for name in commands}}
+
+
+def test_scene4_observer_covers_capture_gaps_but_requires_visual_episode_binding():
+    identity = {"complete": True, "bundle": "com.huawei.hmos.taskmanager",
+        "ability": "LowMemoryAbility", "mission_id": "m1", "mission_start_boottime_s": 102.05,
+        "visible_episode_start_boottime_s": 102.05, "pid": 51731, "uid": 20020188,
+        "start_ticks": "898", "win_id": 696, "visible": True, "focused": False,
+        "new_visible_episode": True, "baseline_visible": False,
+        "identity_boottime_pre_s": 102.8, "identity_boottime_post_s": 102.9}
+    frames_reviews = [_frame_review_pair(0, 100, 100.7, "pending_review"),
+        _frame_review_pair(1, 102, 102.7, "confirmed_native_low_memory", candidate=identity),
+        _frame_review_pair(2, 104, 104.7, "pending_review"),
+        _frame_review_pair(3, 106, 106.7, "pending_review")]
+    # The missing human reviews on blank frames are covered by the complete
+    # observer stream; the native episode still needs one SHA-bound positive.
+    observations = [_observer_row(0, 100, 100.2),
+        _observer_row(1, 102, 102.2, "identity_candidate_observed", [identity]),
+        _observer_row(2, 104, 104.2, "identity_candidate_observed", [identity]),
+        _observer_row(3, 106, 106.2)]
+    proof = _scene4_frame_manifest_proof([pair[0] for pair in frames_reviews],
+        [pair[1] for pair in frames_reviews], 100, 108, case_id="c1",
+        readonly_observations=observations)
+    assert proof["complete"]
+    assert len(proof["native_popup_events"]) == 1
+
+    no_visual = _scene4_frame_manifest_proof([pair[0] for pair in frames_reviews],
+        [dict(pair[1], review_classification="pending_review") for pair in frames_reviews],
+        100, 108, case_id="c1", readonly_observations=observations)
+    assert not no_visual["complete"]
+    assert any("missing_in-episode_visual_confirmation" in err for err in no_visual["errors"])
+
+
+def test_scene4_observer_missing_status_partial_candidate_reuse_and_boundary_stay_unknown():
+    valid = [_observer_row(i, 100 + i * 2, 100.2 + i * 2) for i in range(5)]
+    missing_rc = [dict(row) for row in valid]
+    missing_rc[2] = dict(missing_rc[2], command_status={**missing_rc[2]["command_status"],
+        "wms_post": {"exit_code": None, "complete": False}})
+    assert not _scene4_readonly_observation_proof(missing_rc, 100, 108, "c1", 5)["complete"]
+
+    bad_identity = {"complete": False, "mission_id": "m1", "win_id": 7,
+        "pid": 10, "uid": 20, "start_ticks": "30", "visible": True}
+    partial = list(valid)
+    partial[1] = _observer_row(1, 102, 102.2, "identity_candidate_observed_partial", [bad_identity])
+    assert not _scene4_readonly_observation_proof(partial, 100, 108, "c1", 5)["complete"]
+
+    # A verified negative observation closes the episode. Same PID/WinId with
+    # a different start_ticks is a new process generation, never deduped.
+    first_id = {"complete": True, "mission_id": "m1", "win_id": 7,
+        "pid": 10, "uid": 20, "start_ticks": "30", "visible": True}
+    second_id = dict(first_id, start_ticks="31")
+    rows = [_observer_row(0, 100, 100.2),
+        _observer_row(1, 102, 102.2, "identity_candidate_observed", [first_id]),
+        _observer_row(2, 104, 104.2),
+        _observer_row(3, 106, 106.2, "identity_candidate_observed", [second_id])]
+    proof = _scene4_readonly_observation_proof(rows, 100, 108, "c1", 5)
+    assert proof["complete"]
+    assert len(proof["visible_native_episodes"]) == 2
+    assert proof["visible_native_episodes"][0]["identity_key"] != proof["visible_native_episodes"][1]["identity_key"]
+
+    crossed = [_observer_row(0, 99.9, 100.1), *valid[1:4]]
+    crossed_proof = _scene4_readonly_observation_proof(crossed, 100, 108, "c1", 5)
+    assert crossed_proof["complete"]
+    assert crossed_proof["supplemental_cross_boundary_count"] == 1
+
+
+def test_scene4_observer_requires_nonempty_complete_inventory_for_negative_and_rejects_overlap():
+    empty_inventory = [_observer_row(i, 100 + i * 2, 100.2 + i * 2) for i in range(5)]
+    empty_inventory[2]["command_status"]["aa_pre"]["inventory_complete"] = False
+    assert not _scene4_readonly_observation_proof(empty_inventory, 100, 108, "c1", 5)["complete"]
+
+    # A verified visible candidate may remain a positive despite a global WMS
+    # count mismatch; the per-window identity is independently complete.
+    identity = {"complete": True, "mission_id": "m1", "win_id": 7,
+        "pid": 10, "uid": 20, "start_ticks": "30", "visible": True}
+    positive = [_observer_row(i, 100 + i * 2, 100.2 + i * 2) for i in range(5)]
+    positive[1] = _observer_row(1, 102, 102.2, "identity_candidate_observed", [identity])
+    positive[1]["command_status"]["wms_pre"]["inventory_complete"] = False
+    assert _scene4_readonly_observation_proof(positive, 100, 108, "c1", 5)["complete"]
+
+    overlapping = [_observer_row(0, 100, 102), _observer_row(1, 101.9, 102.2),
+        *[_observer_row(i, 102 + (i - 2) * 2, 102.2 + (i - 2) * 2) for i in range(2, 5)]]
+    assert not _scene4_readonly_observation_proof(overlapping, 100, 108, "c1", 5)["complete"]
+    assert any("observer_interval_overlap" in error for error in
+        _scene4_readonly_observation_proof(overlapping, 100, 108, "c1", 5)["errors"])
+
+
+def test_scene4_reconcile_requires_pinned_observer_jsonl_sha(tmp_path):
+    manifest = tmp_path / "manifest.jsonl"
+    review = tmp_path / "review.jsonl"
+    observations = tmp_path / "observer.jsonl"
+    manifest.write_text("{}\n", encoding="utf-8")
+    review.write_text("{}\n", encoding="utf-8")
+    observations.write_text("{}\n", encoding="utf-8")
+    result = _scene4_revalidate_frame_manifest_files(manifest, review, 100, 108, "c1",
+        readonly_observations_path=observations, readonly_observations_sha256="0" * 64)
+    assert not result["complete"]
+    assert result["errors"] == ["readonly_observations_sha256_missing_or_mismatch"]
+
+
+def test_scene4_observer_requires_structural_aa_and_mission_inventory():
+    assert not _scene4_observer_aa_inventory_complete("successful but empty output")
+    assert not _scene4_observer_aa_inventory_complete(
+        "AppRunningRecords:\nAppRunningRecord ID #0\n process name [pkg]")
+    assert _scene4_observer_aa_inventory_complete(
+        "AppRunningRecords:\nAppRunningRecord ID #0\n  process name [pkg.a]\n"
+        "  pid #10  uid #20\n  state #BACKGROUND\n")
+
+    assert not _scene4_observer_mission_inventory_complete("User ID #100\ncurrent mission lists:{")
+    assert _scene4_observer_mission_inventory_complete("User ID #100\n  current mission lists:{\n }")
+    assert not _scene4_observer_mission_inventory_complete(
+        "User ID #100\n current mission lists:{\n Mission ID #1 LowMemoryAbility "
+        "com.huawei.hmos.taskmanager\n }")
+    # This device's TaskManager mission listing has no PID field; identity is
+    # supplied and checked independently by AA/WMS/proc observations.
+    assert _scene4_observer_mission_inventory_complete(
+        "User ID #100\n current mission lists:{\n"
+        " Mission ID #1 mission name #[#com.huawei.hmos.taskmanager:manager:LowMemoryAbility]\n"
+        "   main name [LowMemoryAbility]\n"
+        "   bundle name [com.huawei.hmos.taskmanager]\n"
+        "   state #FOREGROUND  start time [101000]\n }")
+
+
 def test_scene4_frame_clock_marker_payload_handles_single_line_helper_output():
     raw = "before\n__S4_FRAME_CLOCK_POST__\nboottime_s=8191.2 monotonic_s=8191.2 clk_tck=100\n__AFTER__"
     assert _scene4_marker_payload(raw, "__S4_FRAME_CLOCK_POST__", "__AFTER__") == \
@@ -244,13 +393,101 @@ def test_scene4_capture_parser_accepts_saved_device_raw_and_rejects_bad_markers(
         "__S4_CAP_000000_")["valid"] is False
 
 
+def test_scene4_capture_worker_advances_slot_once_for_success_and_failures():
+    worker_source = inspect.getsource(scene4_runner.Session.start_scene4_frame_capture)
+    append_at = worker_source.index("append_row(row, review)")
+    advance = "slot = _scene4_advance_frame_slot(slot)"
+    assert worker_source.count(advance) == 1
+    advance_at = worker_source.index(advance)
+    assert append_at < advance_at < worker_source.index("if not captured:", advance_at)
+    assert "slot += 1" not in worker_source
+
+    # Both a successful transfer and returned failures consume one slot.
+    slot = 0
+    frame_ids = []
+    for _outcome in ("received", "capture_failed", "received"):
+        frame_ids.append(f"frame_{slot:06d}")
+        slot = _scene4_advance_frame_slot(slot)
+    assert frame_ids == ["frame_000000", "frame_000001", "frame_000002"]
+    assert len(set(frame_ids)) == 3
+
+
+def test_scene4_capture_timeout_keeps_readonly_observations_without_overlapping_screencap():
+    source = inspect.getsource(scene4_runner.Session.start_scene4_frame_capture)
+    assert 'readonly_observation_worker' in source
+    assert source.index('state["readonly_observation_worker"] = observation') < \
+        source.index('state["worker"] = thread')
+    timeout_branch = source.index('if capture_error:')
+    timeout_end = source.index('break', timeout_branch)
+    branch = source[timeout_branch:timeout_end]
+    assert 'observation.start()' not in branch
+    assert timeout_end < source.index('if row.get("transfer_status")', timeout_branch)
+    observer_start = source.index('def readonly_observation_worker()')
+    observer_end = source.index('def worker()', observer_start)
+    observer = source[observer_start:observer_end]
+    assert 'hidumper -s WindowManagerService' in observer
+    assert 'aa dump -r' in observer
+    assert 'aa dump -l' in observer
+    assert '_scene4_frame_identity_snapshot(self, identity_frame' in observer
+    assert '"visual_frame": None' in observer
+    # On timeout, no replacement screenCap is issued; the capture loop exits
+    # while the separate read-only observer remains active until case stop.
+    assert 'screenCap -p' in source[:timeout_branch]
+    assert 'screenCap -p' not in branch
+
+
 def test_scene4_identity_snapshot_call_contract_accepts_frame_and_six_sections():
     class SessionStub:
-        scene4_clock_probe_verified = True
+        scene4_frame_clock_hash_verified = True
+        config = {"scene4": {}}
+        popup_baselines = {}
 
-    result = _scene4_frame_identity_snapshot(SessionStub(), {"case_id": "c1"},
+    result = _scene4_frame_identity_snapshot(SessionStub(), {"case_id": "c1", "slot_index": 0,
+        "capture_raw": _scene4_capture_clock_raw(0)},
         "", "", "", "", "", "")
     assert result["status"] == "no_aa_low_memory_candidate"
+
+
+def test_scene4_legacy_identity_path_verifies_clock_helper_once_without_global_preinit(monkeypatch):
+    helper_hash = "a" * 64
+    helper_path = "/data/local/tmp/clockprobe"
+    class SessionStub:
+        scene4_frame_clock_hash_verified = False
+        config = {"scene4": {"oracle_clock_probe_remote_path": helper_path,
+                              "oracle_clock_probe_sha256": helper_hash}}
+        popup_baselines = {}
+        result = {}
+        class Device:
+            def shell(self, command, **_kwargs):
+                assert command == "sha256sum /data/local/tmp/clockprobe"
+                return f"{helper_hash} {helper_path}\n"
+        device = Device()
+
+    session = SessionStub()
+    result = _scene4_frame_identity_snapshot(session, {"case_id": "c1", "slot_index": 0,
+        "capture_raw": _scene4_capture_clock_raw(0)}, "", "", "", "", "", "")
+    assert session.scene4_frame_clock_hash_verified is True
+    assert session.result["scene4_frame_clock_helper"]["readback_sha256"] == helper_hash
+    assert result["status"] == "no_aa_low_memory_candidate"
+
+
+def test_scene4_identity_path_keeps_clock_failure_unknown(monkeypatch):
+    helper_path = "/data/local/tmp/clockprobe"
+    class SessionStub:
+        scene4_frame_clock_hash_verified = False
+        config = {"scene4": {"oracle_clock_probe_remote_path": helper_path,
+                              "oracle_clock_probe_sha256": "a" * 64}}
+        popup_baselines = {}
+        result = {}
+        class Device:
+            def shell(self, _command, **_kwargs):
+                return "b" * 64 + " /data/local/tmp/clockprobe\n"
+        device = Device()
+
+    result = _scene4_frame_identity_snapshot(SessionStub(), {"case_id": "c1", "slot_index": 0,
+        "capture_raw": _scene4_capture_clock_raw(0)}, "", "", "", "", "", "")
+    assert result["status"] == "unknown_clock_helper_unverified"
+    assert "clock_helper_hash_mismatch" in result["errors"][0]
 
 
 def test_scene4_frame_review_jsonl_revalidation_is_sha_bound_and_auditable(tmp_path):
@@ -1726,3 +1963,56 @@ def test_popup_recovery_wait_precedes_each_fresh_donor_preparation():
     assert initial_restore < initial_wait < initial_launch
     assert next_restore < next_wait < next_launch < later_reference
     assert 'popup_preparation = session.restore_native_low_memory_dialog(case_id + "_pre")' not in source
+
+def _schema2_profile_donor(index=1):
+    pid = 10000 + index
+    uid = 20020187 + index
+    ticks = 8000000 + index
+    return {
+        "bundle": f"io.memscene.scene4.workload.a{index}", "uid": uid, "pid": pid,
+        "start_ticks": str(ticks), "daily_ready": True, "window_ready": True,
+        "daily_ready_boottime_s": 100.0, "background_since_s": 101.0,
+        "aa_pid": pid, "aa_uid": uid, "aa_state": "BACKGROUND",
+        "aa_observed_boottime_s": 102.0, "window_visible": False,
+        "window_focused": False, "window_observed_boottime_s": 102.0,
+        "proc_verified": True, "proc_start_ticks": str(ticks),
+        "proc_observed_boottime_s": 102.0, "lifecycle_clear": True,
+        "lifecycle_observed_boottime_s": 102.0,
+        "background_evidence_source": "os_snapshot",
+    }
+
+
+def test_scene4_schema2_force_shrink_all_contract_supports_1_to_8_daily_ready_donors():
+    assert SCENE4_V2_DONOR_SUFFIXES == SCENE4_V3_DONOR_SUFFIXES[:21]
+    header = _scene4_schedule_v2_header()
+    assert header[:6] == ["schema_version", "event_id", "case_id", "launch_boottime_s",
+                          "planned_needed_bytes", "donor_count"]
+    assert len(header) == 6 + 8 * 21
+    assert not any("writeback_file_" in field or field.endswith("writeback_file_path") for field in header)
+
+    for count in (1, 8):
+        donors = [_schema2_profile_donor(index) for index in range(1, count + 1)]
+        row = _scene4_schedule_v2_row("event_peak", "case", 115.0, 22_272 * 1024**2, donors)
+        assert row[:6] == ["2", "event_peak", "case", "115", str(22_272 * 1024**2), str(count)]
+        assert len(row) == 6 + count * 21
+        assert "|".join(row).count("memscene_") == 0
+
+    invalid = _schema2_profile_donor()
+    invalid["window_visible"] = True
+    with pytest.raises(ValueError, match="readiness, visibility, or identity proof"):
+        _scene4_schedule_v2_row("event_peak", "case", 115.0, 1, [invalid])
+    invalid = _schema2_profile_donor()
+    invalid["start_ticks"] = str(int(invalid["start_ticks"]) + 1)
+    with pytest.raises(ValueError, match="dynamic identity"):
+        _scene4_schedule_v2_row("event_peak", "case", 115.0, 1, [invalid])
+
+
+def test_scene4_schema3_writeback_contract_remains_distinct_and_unchanged():
+    donors = [_schema2_profile_donor(1)]
+    donors[0].update({"writeback_file_path": "memscene_case.pages", "writeback_file_dev": 10,
+                      "writeback_file_ino": 20, "writeback_file_size": 4096})
+    header = _scene4_schedule_v3_header()
+    row = _scene4_schedule_v3_row("event_peak", "case", 115.0, 1, donors)
+    assert header[0] == "schema_version" and len(header) == 6 + 8 * 25
+    assert row[0] == "3" and len(row) == 6 + 25
+    assert row[-4:] == ["memscene_case.pages", "10", "20", "4096"]

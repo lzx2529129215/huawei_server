@@ -99,6 +99,20 @@ def test_runner_bound_config_must_match_live_daemon_paths_and_device(tmp_path):
             hdc=sys.executable, device_id="device-id")
 
 
+def test_legacy_peak_transition_metadata_does_not_claim_donor_or_synthetic_scope():
+    config = {"test_apps": [f"io.memscene.scene4.workload.a{i}" for i in range(1, 9)],
+        "scene4": {"execution_profile": "legacy_peak_transition", "file_mib": 1200,
+            "daily_mib": 2400, "peak_mib": 5184, "daily_cold_seconds": 15,
+            "case_repetitions": {"popup": 2, "startup": 2}}}
+    metadata = runner_result_metadata(runner_mode=True, runner_config=config)
+    assert metadata["workload_profile"] == "legacy_peak_transition"
+    assert metadata["configured_test_app_count"] == 8
+    assert metadata["target_launch_count"] is None
+    assert metadata["scope"] == "scene4_legacy_peak_transition_real_runner_execution"
+    assert metadata["planned_needed_bytes"] is None
+    assert metadata["file_mib"] == 1200
+
+
 def test_diagnostic_session_has_runner_journal_readback_slot():
     session = Diag()
     assert session.scene4_journal_readback == {}

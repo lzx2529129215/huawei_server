@@ -33,6 +33,16 @@ SCENE4_DONOR_STATIC_SUFFIXES = [
     "bundle", "uid", "pid", "start_ticks", "cold_ready", "window_ready",
     "cold_ready_boottime_s", "background_since_s", "last_heartbeat_s"]
 
+SCENE4_V3_DONOR_SUFFIXES = [
+    "bundle", "uid", "pid", "start_ticks", "daily_ready", "window_ready",
+    "daily_ready_boottime_s", "background_since_s", "aa_pid", "aa_uid",
+    "aa_state", "aa_observed_boottime_s", "window_visible", "window_focused",
+    "window_observed_boottime_s", "proc_verified", "proc_start_ticks",
+    "proc_observed_boottime_s", "lifecycle_clear", "lifecycle_observed_boottime_s",
+    "background_evidence_source", "writeback_file_path", "writeback_file_dev",
+    "writeback_file_ino", "writeback_file_size"]
+SCENE4_V2_DONOR_SUFFIXES = SCENE4_V3_DONOR_SUFFIXES[:21]
+
 
 def _scene4_append_jsonl(path: Path, row: dict) -> None:
     """Durably append one independently timestamped Scene4 evidence row."""
@@ -78,6 +88,527 @@ def _scene4_schedule_header() -> list[str]:
         fields.extend(f"{prefix}_{name}" for name in
                       SCENE4_DONOR_STATIC_SUFFIXES + SCENE4_DONOR_DYNAMIC_SUFFIXES)
     return fields
+
+
+def _scene4_schedule_v3_header() -> list[str]:
+    fields = ["schema_version", "event_id", "case_id", "launch_boottime_s",
+              "planned_needed_bytes", "donor_count"]
+    for index in range(1, 9):
+        fields.extend(f"donor_{index}_{name}" for name in SCENE4_V3_DONOR_SUFFIXES)
+    return fields
+
+
+def _scene4_schedule_v2_header() -> list[str]:
+    fields = ["schema_version", "event_id", "case_id", "launch_boottime_s",
+              "planned_needed_bytes", "donor_count"]
+    for index in range(1, 9):
+        fields.extend(f"donor_{index}_{name}" for name in SCENE4_V2_DONOR_SUFFIXES)
+    return fields
+
+
+def _scene4_schedule_v2_row(event_id: str, case_id: str, launch_boottime_s: float,
+                            planned_needed_bytes: int, donors: list[dict]) -> list[str]:
+    """Build the 1–8 donor daily-ready OS-snapshot schema used by force_shrink_all."""
+    if not event_id or not case_id or not math.isfinite(float(launch_boottime_s)) or launch_boottime_s <= 0:
+        raise ValueError("schema2 event, case, and positive finite BOOTTIME deadline are required")
+    if isinstance(planned_needed_bytes, bool) or int(planned_needed_bytes) <= 0:
+        raise ValueError("schema2 planned_needed_bytes must be positive")
+    if not 1 <= len(donors) <= 8:
+        raise ValueError("schema2 requires one through eight verified donor records")
+    row = ["2", str(event_id), str(case_id), format(float(launch_boottime_s), ".17g"),
+           str(int(planned_needed_bytes)), str(len(donors))]
+    for donor in donors:
+        missing = [name for name in SCENE4_V2_DONOR_SUFFIXES if name not in donor]
+        if missing:
+            raise ValueError(f"schema2 donor is missing required fields: {','.join(missing)}")
+        if any(type(donor[key]) is not bool for key in
+               ("daily_ready", "window_ready", "window_visible", "window_focused",
+                "proc_verified", "lifecycle_clear")):
+            raise ValueError("schema2 readiness and observation flags must be explicit booleans")
+        if donor["aa_state"] != "BACKGROUND" or donor["background_evidence_source"] != "os_snapshot":
+            raise ValueError("schema2 donor must have fresh background OS-snapshot evidence")
+        if str(donor["pid"]) != str(donor["aa_pid"]) or str(donor["uid"]) != str(donor["aa_uid"]) or \
+                str(donor["start_ticks"]) != str(donor["proc_start_ticks"]):
+            raise ValueError("schema2 dynamic identity does not match frozen PID/UID/start_ticks")
+        if donor["daily_ready"] is not True or donor["window_ready"] is not True or \
+                donor["window_visible"] is not False or donor["window_focused"] is not False or \
+                donor["proc_verified"] is not True or donor["lifecycle_clear"] is not True:
+            raise ValueError("schema2 donor readiness, visibility, or identity proof is incomplete")
+        for key in ("uid", "pid", "start_ticks", "aa_pid", "aa_uid", "proc_start_ticks"):
+            if not str(donor[key]).isdecimal() or int(donor[key]) <= 0:
+                raise ValueError(f"schema2 donor field {key} must be a positive decimal integer")
+        for key in ("daily_ready_boottime_s", "background_since_s", "aa_observed_boottime_s",
+                    "window_observed_boottime_s", "proc_observed_boottime_s",
+                    "lifecycle_observed_boottime_s"):
+            value = float(donor[key])
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"schema2 donor field {key} must be positive finite BOOTTIME")
+        if float(donor["background_since_s"]) < float(donor["daily_ready_boottime_s"]):
+            raise ValueError("schema2 background proof predates daily-ready")
+        row.extend("true" if donor[name] is True else "false" if donor[name] is False
+                   else str(donor[name]) for name in SCENE4_V2_DONOR_SUFFIXES)
+    expected_width = 6 + len(donors) * len(SCENE4_V2_DONOR_SUFFIXES)
+    if len(row) != expected_width:
+        raise AssertionError("schema2 schedule row/donor width mismatch")
+    return row
+
+
+def _scene4_schedule_v3_row(event_id: str, case_id: str, launch_boottime_s: float,
+                            planned_needed_bytes: int, donors: list[dict]) -> list[str]:
+    """Build the explicit 1–8 donor OS-snapshot/writeback schema without legacy fields."""
+    if not event_id or not case_id or not math.isfinite(float(launch_boottime_s)) or launch_boottime_s <= 0:
+        raise ValueError("schema3 event, case, and positive finite BOOTTIME deadline are required")
+    if isinstance(planned_needed_bytes, bool) or int(planned_needed_bytes) <= 0:
+        raise ValueError("schema3 planned_needed_bytes must be positive")
+    if not 1 <= len(donors) <= 8:
+        raise ValueError("schema3 requires one through eight verified donor records")
+    row = ["3", str(event_id), str(case_id), format(float(launch_boottime_s), ".17g"),
+           str(int(planned_needed_bytes)), str(len(donors))]
+    for donor in donors:
+        missing = [name for name in SCENE4_V3_DONOR_SUFFIXES if name not in donor]
+        if missing:
+            raise ValueError(f"schema3 donor is missing required fields: {','.join(missing)}")
+        if any(type(donor[key]) is not bool for key in
+               ("daily_ready", "window_ready", "window_visible", "window_focused",
+                "proc_verified", "lifecycle_clear")):
+            raise ValueError("schema3 readiness and observation flags must be explicit booleans")
+        if donor["aa_state"] not in ("BACKGROUND", "FOREGROUND") or \
+                donor["background_evidence_source"] != "os_snapshot":
+            raise ValueError("schema3 donor state/source is invalid")
+        if str(donor["pid"]) != str(donor["aa_pid"]) or str(donor["uid"]) != str(donor["aa_uid"]) or \
+                str(donor["start_ticks"]) != str(donor["proc_start_ticks"]):
+            raise ValueError("schema3 dynamic identity does not match frozen PID/UID/start_ticks")
+        if donor["writeback_file_path"] != f"memscene_{case_id}.pages":
+            raise ValueError("schema3 file path must be the owned case backing file basename")
+        for key in ("uid", "pid", "start_ticks", "aa_pid", "aa_uid", "proc_start_ticks",
+                    "writeback_file_dev", "writeback_file_ino", "writeback_file_size"):
+            if not str(donor[key]).isdecimal() or int(donor[key]) <= 0:
+                raise ValueError(f"schema3 donor field {key} must be a positive decimal integer")
+        for key in ("daily_ready_boottime_s", "background_since_s", "aa_observed_boottime_s",
+                    "window_observed_boottime_s", "proc_observed_boottime_s",
+                    "lifecycle_observed_boottime_s"):
+            value = float(donor[key])
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"schema3 donor field {key} must be positive finite BOOTTIME")
+        row.extend("true" if donor[name] is True else "false" if donor[name] is False
+                   else str(donor[name]) for name in SCENE4_V3_DONOR_SUFFIXES)
+    expected_width = 6 + len(donors) * len(SCENE4_V3_DONOR_SUFFIXES)
+    if len(row) != expected_width:
+        raise AssertionError("schema3 schedule row/donor width mismatch")
+    return row
+
+
+def _scene4_legacy_os_snapshot(session: "Session", case_id: str,
+                               daily_records: dict[str, list[dict]],
+                               bundles: list[str]) -> dict:
+    """Read one batched AA/WMS/proc snapshot for the legacy eight-app schedule3 profile."""
+    d = session.device
+    ready = {}
+    for bundle in bundles:
+        row = next((item for item in reversed(daily_records.get(bundle, []))
+                    if item.get("event") == "daily_ready"), None)
+        if row is None:
+            continue
+        try:
+            pid, uid, ticks = int(row["pid"]), int(row["uid"]), str(row["start_ticks"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if pid > 0 and uid > 0 and ticks.isdecimal() and int(ticks) > 0:
+            ready[bundle] = {"bundle": bundle, "uid": uid, "pid": pid,
+                "start_ticks": ticks, "daily_ready_boottime_s": _scene4_event_time(row)}
+    pre_marker, aa_marker, wms_marker, end_marker = (
+        "__S3_BOOT_PRE__", "__S3_AA__", "__S3_WMS__", "__S3_BOOT_POST__")
+    script = (f"echo {pre_marker}; cat /proc/uptime; echo {aa_marker}; aa dump -r; "
+              f"echo {wms_marker}; hidumper -s WindowManagerService -a '-a'; ")
+    for index, donor in enumerate(ready.values()):
+        pid, bundle, uid = donor["pid"], donor["bundle"], donor["uid"]
+        leaf = f"/dev/memcg/100/{bundle}_{uid}"
+        page_file = f"/proc/{pid}/root/data/storage/el2/base/haps/entry/files/memscene_{case_id}.pages"
+        script += (f"echo __S3_PROC_{index}_BEGIN__; cat /proc/{pid}/stat 2>&1; "
+            f"echo __S3_STATUS_{index}__; cat /proc/{pid}/status 2>&1; "
+            f"echo __S3_STAT2_{index}__; cat /proc/{pid}/stat 2>&1; "
+            f"echo __S3_CMD_{index}__; tr '\\000' ' ' < /proc/{pid}/cmdline 2>/dev/null; echo; "
+            f"echo __S3_CGROUP_{index}__; cat /proc/{pid}/cgroup 2>&1; "
+            f"echo __S3_MEMBERS_{index}__; cat {quote(leaf + '/cgroup.procs')} 2>&1; "
+            f"echo __S3_FILE_{index}__; stat -c '%d|%i|%s' {quote(page_file)} 2>&1; "
+            f"echo __S3_PROC_{index}_END__; ")
+    script += f"echo {end_marker}; cat /proc/uptime"
+    raw = d.shell(script, timeout=12, check=False)
+    def section(begin: str, end: str) -> str:
+        match = re.search(rf"(?ms)^{re.escape(begin)}\s*\n(.*?)(?=^{re.escape(end)}\s*$)", raw)
+        return match.group(1).strip() if match else ""
+    try:
+        boot_pre = float(section(pre_marker, aa_marker).split()[0])
+        aa_raw = section(aa_marker, wms_marker)
+        remainder = raw.split(wms_marker + "\n", 1)[1]
+        wms_raw = remainder.split("__S3_PROC_0_BEGIN__", 1)[0].strip()
+        boot_post = float(raw.rsplit(end_marker + "\n", 1)[1].split()[0])
+    except (ValueError, IndexError):
+        return {"complete": False, "reason": "os_snapshot_clock_or_markers_missing", "raw": raw}
+    table = _scene4_wms_window_inventory(wms_raw)
+    proc_rows = {}
+    for index, donor in enumerate(ready.values()):
+        pid, bundle, uid = donor["pid"], donor["bundle"], donor["uid"]
+        block = section(f"__S3_PROC_{index}_BEGIN__", f"__S3_PROC_{index}_END__")
+        labels = [f"__S3_STATUS_{index}__", f"__S3_STAT2_{index}__",
+                  f"__S3_CMD_{index}__", f"__S3_CGROUP_{index}__",
+                  f"__S3_MEMBERS_{index}__", f"__S3_FILE_{index}__"]
+        label_pattern = "|".join(map(re.escape, labels))
+        def psec(label: str) -> str:
+            match = re.search(rf"(?ms)^{re.escape(label)}\s*\n(.*?)(?=^(?:{label_pattern})\s*$|\Z)", block)
+            return match.group(1).strip() if match else ""
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        stat1 = next((line for line in lines if re.match(rf"^{pid} \(", line)), "")
+        stat2 = psec(f"__S3_STAT2_{index}__")
+        status = psec(f"__S3_STATUS_{index}__")
+        cmdline = psec(f"__S3_CMD_{index}__")
+        cgroup = psec(f"__S3_CGROUP_{index}__")
+        members = psec(f"__S3_MEMBERS_{index}__").split()
+        file_fields = psec(f"__S3_FILE_{index}__").split("|")
+        try:
+            before, after = parse_stat(stat1), parse_stat(stat2)
+            uid_line = re.search(r"(?m)^Uid:\s+(\d+)", status)
+            actual_uid = int(uid_line.group(1)) if uid_line else None
+            identity_ok = (before.get("pid") == after.get("pid") == pid and
+                str(before.get("start_ticks")) == str(after.get("start_ticks")) == donor["start_ticks"] and
+                actual_uid == uid and pid in [int(x) for x in members if x.isdigit()] and
+                f"{bundle}_{uid}" in cgroup and bundle in cmdline)
+            if len(file_fields) != 3 or not all(value.isdecimal() and int(value) > 0 for value in file_fields):
+                raise ValueError("backing_file_stat_missing_or_invalid")
+            aa_state = _scene4_aa_running_record_state(aa_raw, bundle, pid, uid)
+            matching_windows = [row for row in table.get("rows", []) if row["pid"] == pid]
+            proc_rows[bundle] = {**donor, "identity_verified": identity_ok,
+                "aa_state": aa_state, "window_rows": matching_windows,
+                "file_dev": int(file_fields[0]), "file_ino": int(file_fields[1]),
+                "file_size": int(file_fields[2]), "proc_observed_boottime_s": boot_post,
+                "aa_observed_boottime_s": boot_pre, "cgroup_raw": cgroup,
+                "process_cmdline": cmdline}
+        except (ValueError, TypeError) as exc:
+            proc_rows[bundle] = {**donor, "identity_verified": False,
+                "error": str(exc), "aa_state": None, "window_rows": [],
+                "proc_observed_boottime_s": boot_post, "aa_observed_boottime_s": boot_pre}
+    all_windows = [row for value in proc_rows.values() for row in value.get("window_rows", [])]
+    details = _scene4_wms_details_batch(session, wms_raw, all_windows) if all_windows else []
+    detail_by_pid: dict[int, list[dict]] = {}
+    for item in details:
+        detail_by_pid.setdefault(int(item.get("pid") or 0), []).append(item)
+    for bundle, value in proc_rows.items():
+        pid = int(value["pid"])
+        owned_details = detail_by_pid.get(pid, [])
+        known = bool(value.get("window_rows")) and len(owned_details) == len(value.get("window_rows", [])) and all(
+            row.get("parsed", {}).get("known") is True and row.get("bracket_valid") is True
+            for row in owned_details)
+        value["window_details"] = owned_details
+        value["window_ready"] = known
+        value["window_visible"] = any(row.get("parsed", {}).get("visible") is True for row in owned_details) if known else None
+        value["window_focused"] = any(row.get("parsed", {}).get("focused") is True for row in owned_details) if known else None
+        value["window_observed_boottime_s"] = max((row.get("boottime_post_s") or 0 for row in owned_details), default=0) or None
+        value["lifecycle_clear"] = bool(value.get("identity_verified") and value.get("aa_state") in ("BACKGROUND", "FOREGROUND") and known)
+        value["lifecycle_observed_boottime_s"] = value.get("window_observed_boottime_s")
+    return {"complete": bool(proc_rows) and all(row.get("identity_verified") for row in proc_rows.values()),
+        "boot_pre_s": boot_pre, "boot_post_s": boot_post, "aa_raw": aa_raw,
+        "wms_table": table, "wms_raw": wms_raw, "donors": proc_rows,
+        "proc_raw": raw, "details_raw": [row.get("raw_batch") for row in details]}
+
+
+def _scene4_schedule_publish_decision(stop_requested: bool, now_boottime_s: float,
+                                      deadline_boottime_s: float,
+                                      publish_reserve_seconds: float = 0.75) -> dict:
+    """Deny publication within a measured safety margin of fixed T."""
+    try:
+        now_value, deadline_value = float(now_boottime_s), float(deadline_boottime_s)
+        reserve_value = float(publish_reserve_seconds)
+    except (TypeError, ValueError):
+        return {"allowed": False, "reason": "clock_unknown"}
+    if stop_requested:
+        return {"allowed": False, "reason": "stop_requested"}
+    if not math.isfinite(now_value) or not math.isfinite(deadline_value):
+        return {"allowed": False, "reason": "clock_unknown"}
+    if not math.isfinite(reserve_value) or reserve_value < 0:
+        return {"allowed": False, "reason": "publish_reserve_invalid"}
+    remaining = deadline_value - now_value
+    if remaining <= 0:
+        return {"allowed": False, "reason": "fixed_deadline_reached"}
+    if remaining < reserve_value:
+        return {"allowed": False, "reason": "publication_reserve_window_reached",
+            "remaining_seconds": remaining, "publish_reserve_seconds": reserve_value}
+    return {"allowed": True, "reason": None,
+        "remaining_seconds": remaining, "publish_reserve_seconds": reserve_value}
+
+
+def _scene4_profile_cutoff_status(snapshot_inflight: bool, writer_alive: bool,
+                                  publication_rows: list[dict]) -> dict:
+    """Only a publication that actually completed after T creates a schedule gap."""
+    late = [row for row in publication_rows if row.get("crossed_deadline") is True]
+    return {"snapshot_inflight_at_stop": bool(snapshot_inflight),
+        "writer_alive_when_checked": bool(writer_alive),
+        "late_publications": late,
+        "measurement_gap": bool(late)}
+
+
+def _scene4_legacy_v3_window(session: "Session", case_id: str,
+                             bundles: list[str], daily_records: dict[str, list[dict]],
+                             window_seconds: float, peak_mib: int, daily_mib: int, *,
+                             window_start_host_monotonic: float | None = None,
+                             window_start_boottime_s: float | None = None) -> dict:
+    """Register one fixed legacy eight-app event and refresh only OS evidence until peak T."""
+    cfg = session.config["scene4"]
+    backend = cfg.get("oracle_backend")
+    if cfg.get("execution_profile") != "legacy_peak_transition" or \
+            cfg.get("oracle_profile") != "peak_transition_os_snapshot" or \
+            backend not in {"proc_file_writeback", "force_shrink_all"}:
+        raise ValueError("legacy peak-transition route requires an explicit supported OS-snapshot backend")
+    schema_version = 3 if backend == "proc_file_writeback" else 2
+    if schema_version == 2 and cfg.get("oracle_ratio_semantics") != "cumulative_anon_watermark":
+        raise ValueError("schema2 force_shrink_all route requires cumulative_anon_watermark semantics")
+    schedule_remote = str(cfg.get("oracle_schedule_remote_path", "")).strip()
+    ledger_remote = str(cfg.get("oracle_ledger_remote_path", "")).strip()
+    if not schedule_remote or not ledger_remote:
+        raise ValueError("legacy peak-transition route requires bound schedule and ledger paths")
+    host_window_started = (time.monotonic() if window_start_host_monotonic is None
+                           else float(window_start_host_monotonic))
+    d = session.device
+    window_start_boottime = (float(d.shell("cat /proc/uptime").split()[0])
+        if window_start_boottime_s is None else float(window_start_boottime_s))
+    fixed_deadline = window_start_boottime + float(window_seconds)
+    host_deadline = host_window_started + float(window_seconds)
+    control = _scene4_control_readback(session, schedule_remote)
+    if not control.get("verified"):
+        raise RuntimeError("legacy peak-transition service control readback did not match requested A/B phase")
+    needed = int(cfg.get("planned_needed_bytes", len(bundles) *
+        (int(peak_mib) - int(daily_mib)) * 1024**2))
+    exact_needed = len(bundles) * (int(peak_mib) - int(daily_mib)) * 1024**2
+    if needed != exact_needed or needed <= 0:
+        raise ValueError("legacy profile planned bytes must equal eight-app incremental peak demand")
+    event_id = f"{case_id}_peak_transition"
+    suffix = f"v{schema_version}"
+    local_path = session.output / f"oracle_schedule_{suffix}.tsv"
+    observation_path = session.output / f"oracle_schedule_{suffix}_observations.jsonl"
+    remote_parent = schedule_remote.rsplit("/", 1)[0] if "/" in schedule_remote else "."
+    d.shell("mkdir -p " + quote(remote_parent), check=False)
+    prior = d.shell("cat " + quote(schedule_remote), check=False)
+    if prior.strip():
+        prior_local = session.output / f"oracle_schedule_{suffix}_previous.tsv"
+        prior_local.write_text(prior.rstrip("\n") + "\n", encoding="utf-8")
+        d.call("file", "send", str(prior_local), schedule_remote + ".previous", timeout=45)
+    ledger_state = d.shell("if test -e " + quote(ledger_remote) + "; then echo present; else echo absent; fi",
+                           timeout=8, check=False).strip()
+    if ledger_state == "present":
+        existing_ledger = d.shell("cat " + quote(ledger_remote), timeout=10, check=False)
+        parsed_ledger = list(csv.reader(existing_ledger.splitlines()))
+        if not parsed_ledger or parsed_ledger[0][:4] != ["action_id", "event_id", "case_id", "ledger_status"]:
+            raise RuntimeError("legacy profile bound ledger exists but has an unknown/unreadable header")
+        if any(len(row) > 1 and row[1] == event_id for row in parsed_ledger[1:]):
+            raise RuntimeError("legacy profile refuses to reuse an event_id already present in the ledger")
+    elif ledger_state != "absent":
+        raise RuntimeError("legacy profile bound ledger existence check was not authoritative")
+    header = _scene4_schedule_v3_header() if schema_version == 3 else _scene4_schedule_v2_header()
+    stop = threading.Event()
+    writer_state: dict = {"registered": False, "rows_written": 0, "rounds": 0,
+                          "candidate_bundles": [], "errors": [], "snapshot_intervals": [],
+                          "schedule_publish_intervals": [], "snapshot_inflight": False,
+                          "publish_inflight": False, "publish_after_stop_rejected": 0,
+                          "window_start_boottime_s": window_start_boottime,
+        "deadline_boottime_s": fixed_deadline, "schema_version": schema_version,
+        "oracle_backend": backend}
+    writer_lock = threading.Lock()
+    frozen_donors: list[dict] | None = None
+    observed_background_since: dict[str, float] = {}
+    cadence = max(1.0, min(5.0, float(cfg.get("oracle_profile_action_interval_ms", 1000)) / 1000.0))
+    def writer() -> None:
+        nonlocal frozen_donors
+        next_tick = time.monotonic()
+        while not stop.is_set():
+            snapshot_host_start_ns = None
+            try:
+                snapshot_host_start_ns = time.monotonic_ns()
+                with writer_lock:
+                    writer_state["snapshot_inflight"] = True
+                obs = _scene4_legacy_os_snapshot(session, case_id, daily_records, bundles)
+                snapshot_host_end_ns = time.monotonic_ns()
+                snapshot_interval = {"round": writer_state.get("rounds", 0) + 1,
+                    "host_start_monotonic_ns": snapshot_host_start_ns,
+                    "host_end_monotonic_ns": snapshot_host_end_ns,
+                    "duration_seconds": (snapshot_host_end_ns - snapshot_host_start_ns) / 1e9,
+                    "boottime_start_s": obs.get("boot_pre_s"),
+                    "boottime_end_s": obs.get("boot_post_s")}
+                with writer_lock:
+                    writer_state["snapshot_inflight"] = False
+                    writer_state["snapshot_intervals"].append(snapshot_interval)
+                    writer_state["rounds"] += 1
+                    round_number = writer_state["rounds"]
+                evidence = {"round": round_number, "event_id": event_id,
+                    "complete": obs.get("complete"), "boot_pre_s": obs.get("boot_pre_s"),
+                    "boot_post_s": obs.get("boot_post_s"), "wms_table_complete": obs.get("wms_table", {}).get("complete"),
+                    "snapshot_interval": snapshot_interval,
+                    "aa_raw": obs.get("aa_raw"), "wms_raw": obs.get("wms_raw"),
+                    "proc_raw": obs.get("proc_raw"), "details_raw": obs.get("details_raw"),
+                    "donors": obs.get("donors", {}), "error": obs.get("reason")}
+                _scene4_append_jsonl(observation_path, evidence)
+                if not obs.get("donors"):
+                    raise RuntimeError(obs.get("reason", "no daily-ready OS donor identities"))
+                by_bundle = obs["donors"]
+                if frozen_donors is None:
+                    selected = []
+                    for bundle in bundles:
+                        item = by_bundle.get(bundle)
+                        if not item or not item.get("identity_verified") or \
+                                item.get("aa_state") != "BACKGROUND" or \
+                                item.get("window_ready") is not True or \
+                                item.get("window_visible") is not False or \
+                                item.get("window_focused") is not False or \
+                                item.get("lifecycle_clear") is not True:
+                            continue
+                        ready_at = item.get("daily_ready_boottime_s")
+                        background_since = max(float(item["aa_observed_boottime_s"]),
+                                                float(item["window_observed_boottime_s"]))
+                        if ready_at is None or not math.isfinite(float(ready_at)) or background_since < float(ready_at):
+                            continue
+                        observed_background_since[bundle] = background_since
+                        selected.append({"bundle": bundle, "uid": item["uid"], "pid": item["pid"],
+                            "start_ticks": item["start_ticks"], "daily_ready": True,
+                            "window_ready": True, "daily_ready_boottime_s": float(ready_at),
+                            "background_since_s": background_since,
+                            "aa_pid": item["pid"], "aa_uid": item["uid"],
+                            "aa_state": item["aa_state"],
+                            "aa_observed_boottime_s": float(item["aa_observed_boottime_s"]),
+                            "window_visible": False, "window_focused": False,
+                            "window_observed_boottime_s": float(item["window_observed_boottime_s"]),
+                            "proc_verified": True, "proc_start_ticks": item["start_ticks"],
+                            "proc_observed_boottime_s": float(item["proc_observed_boottime_s"]),
+                            "lifecycle_clear": True,
+                            "lifecycle_observed_boottime_s": float(item["lifecycle_observed_boottime_s"]),
+                            "background_evidence_source": "os_snapshot"})
+                        if schema_version == 3:
+                            selected[-1].update({
+                                "writeback_file_path": f"memscene_{case_id}.pages",
+                                "writeback_file_dev": item["file_dev"],
+                                "writeback_file_ino": item["file_ino"],
+                                "writeback_file_size": item["file_size"]})
+                    if selected:
+                        frozen_donors = selected
+                    with writer_lock:
+                        writer_state["candidate_bundles"] = [item["bundle"] for item in selected]
+                if not frozen_donors:
+                    raise RuntimeError("no self-owned donor passed fresh AA/WMS/proc/lifecycle identity checks")
+                refreshed = []
+                for static in frozen_donors:
+                    item = by_bundle.get(static["bundle"])
+                    if not item or not item.get("identity_verified") or \
+                            item.get("start_ticks") != static["start_ticks"] or \
+                            (schema_version == 3 and (
+                                item.get("file_dev") != static["writeback_file_dev"] or
+                                item.get("file_ino") != static["writeback_file_ino"] or
+                                item.get("file_size") != static["writeback_file_size"])) or \
+                            item.get("window_ready") is not True or \
+                            item.get("window_visible") not in (True, False) or \
+                            item.get("window_focused") not in (True, False):
+                        raise RuntimeError("frozen donor identity/file/window observation became unknown")
+                    current = dict(static)
+                    current.update({"aa_pid": item["pid"], "aa_uid": item["uid"],
+                        "aa_state": item.get("aa_state") or "UNKNOWN",
+                        "aa_observed_boottime_s": float(item["aa_observed_boottime_s"]),
+                        "window_visible": bool(item["window_visible"]),
+                        "window_focused": bool(item["window_focused"]),
+                        "window_observed_boottime_s": float(item["window_observed_boottime_s"]),
+                        "proc_verified": bool(item["identity_verified"]),
+                        "proc_start_ticks": item["start_ticks"],
+                        "proc_observed_boottime_s": float(item["proc_observed_boottime_s"]),
+                        "lifecycle_clear": bool(item.get("lifecycle_clear")),
+                        "lifecycle_observed_boottime_s": float(item["lifecycle_observed_boottime_s"])})
+                    refreshed.append(current)
+                now = float(d.shell("cat /proc/uptime").split()[0])
+                deadline = fixed_deadline
+                decision = _scene4_schedule_publish_decision(stop.is_set(), now, deadline)
+                if not decision["allowed"]:
+                    if stop.is_set():
+                        with writer_lock:
+                            writer_state["publish_after_stop_rejected"] += 1
+                    _scene4_append_jsonl(observation_path, {"round": round_number,
+                        "event_id": event_id, "schedule_written": False,
+                        "publish_gate_phase": "after_snapshot_before_row",
+                        "publish_gate_decision": decision,
+                        "deadline_boottime_s": deadline})
+                    return
+                row = (_scene4_schedule_v3_row(event_id, case_id, deadline, needed, refreshed)
+                       if schema_version == 3 else
+                       _scene4_schedule_v2_row(event_id, case_id, deadline, needed, refreshed))
+                payload = "|".join(header) + "\n" + "|".join(row) + "\n"
+                publish_host_start_ns = time.monotonic_ns()
+                publish_boot_start = float(d.shell("cat /proc/uptime").split()[0])
+                decision = _scene4_schedule_publish_decision(
+                    stop.is_set(), publish_boot_start, fixed_deadline)
+                if not decision["allowed"]:
+                    with writer_lock:
+                        writer_state["publish_after_stop_rejected"] += 1
+                    _scene4_append_jsonl(observation_path, {"round": round_number,
+                        "event_id": event_id, "schedule_written": False,
+                        "publish_gate_phase": "immediately_before_atomic_write",
+                        "publish_gate_decision": decision,
+                        "deadline_boottime_s": fixed_deadline})
+                    return
+                with writer_lock:
+                    writer_state["publish_inflight"] = True
+                publish_error = None
+                try:
+                    _scene4_atomic_schedule_write(session, local_path, schedule_remote, payload)
+                except Exception as exc:
+                    publish_error = str(exc)
+                    raise
+                finally:
+                    try:
+                        publish_boot_end = float(d.shell("cat /proc/uptime").split()[0])
+                    except Exception:
+                        publish_boot_end = None
+                    publish_host_end_ns = time.monotonic_ns()
+                    publish_record = {"round": round_number,
+                        "host_start_monotonic_ns": publish_host_start_ns,
+                        "host_end_monotonic_ns": publish_host_end_ns,
+                        "duration_seconds": (publish_host_end_ns-publish_host_start_ns)/1e9,
+                        "boottime_start_s": publish_boot_start, "boottime_end_s": publish_boot_end,
+                        "deadline_boottime_s": fixed_deadline,
+                        "crossed_deadline": bool(publish_boot_end is not None and publish_boot_end > fixed_deadline),
+                        "stop_was_set_at_completion": stop.is_set(), "error": publish_error}
+                    with writer_lock:
+                        writer_state["publish_inflight"] = False
+                        writer_state["schedule_publish_intervals"].append(publish_record)
+                with writer_lock:
+                    writer_state["registered"] = True
+                    writer_state["rows_written"] += 1
+                _scene4_append_jsonl(observation_path, {"round": round_number,
+                    "event_id": event_id, "schedule_written": True,
+                    "deadline_boottime_s": deadline,
+                    "schedule_publish_interval": publish_record,
+                    "donor_bundles": [item["bundle"] for item in refreshed]})
+            except Exception as exc:
+                with writer_lock:
+                    if snapshot_host_start_ns is not None and writer_state.get("snapshot_inflight"):
+                        snapshot_host_end_ns = time.monotonic_ns()
+                        failed_interval = {"round": writer_state.get("rounds", 0) + 1,
+                            "host_start_monotonic_ns": snapshot_host_start_ns,
+                            "host_end_monotonic_ns": snapshot_host_end_ns,
+                            "duration_seconds": (snapshot_host_end_ns-snapshot_host_start_ns)/1e9,
+                            "boottime_start_s": None, "boottime_end_s": None,
+                            "error": str(exc)}
+                        writer_state["snapshot_intervals"].append(failed_interval)
+                        writer_state["snapshot_inflight"] = False
+                    writer_state["errors"].append({"time_monotonic": time.monotonic(), "error": str(exc)})
+                _scene4_append_jsonl(observation_path, {"event_id": event_id,
+                    "schedule_written": False, "error": str(exc)})
+            next_tick += cadence
+            stop.wait(max(0.0, next_tick - time.monotonic()))
+    thread = threading.Thread(target=writer, name=f"scene4-schema{schema_version}-{case_id}", daemon=True)
+    thread.start()
+    return {"event_id": event_id, "thread": thread, "stop": stop,
+        "writer_state": writer_state, "writer_lock": writer_lock,
+        "deadline_boottime_s": fixed_deadline,
+        "host_deadline_monotonic": host_deadline,
+        "window_start_boottime_s": window_start_boottime,
+        "schedule_remote": schedule_remote,
+        "local_schedule_path": str(local_path), "observations_path": str(observation_path),
+        "control_readback": control, "planned_needed_bytes": needed,
+        "publish_reserve_seconds": 0.75, "schema_version": schema_version,
+        "oracle_backend": backend}
 
 
 def _scene4_case_plan(single_case_calibration: bool = False,
@@ -343,7 +874,8 @@ def _scene4_frame_manifest_proof(frames: list[dict], reviews: list[dict],
                                  case_end_boottime_s: float | None,
                                  max_gap_seconds: float = SCENE4_FRAME_MAX_GAP_SECONDS,
                                  case_id: str | None = None,
-                                 collection_end_boottime_s: float | None = None) -> dict:
+                                 collection_end_boottime_s: float | None = None,
+                                 readonly_observations: list[dict] | None = None) -> dict:
     """Require every scheduled frame and boundary to have an exact, reviewed visual record."""
     errors: list[str] = []
     if (not isinstance(case_begin_boottime_s, (int, float)) or isinstance(case_begin_boottime_s, bool) or
@@ -533,6 +1065,12 @@ def _scene4_frame_manifest_proof(frames: list[dict], reviews: list[dict],
                 errors.append("frame_begin_coverage_gap_exceeded")
             if end - valid_intervals[-1][0] > max_gap_seconds:
                 errors.append("frame_end_coverage_gap_exceeded")
+        observed_gaps = list(intervals)
+        if valid_intervals:
+            observed_gaps.extend((valid_intervals[0][1] - begin, end - valid_intervals[-1][0]))
+        maximum_observed_gap = max(observed_gaps, default=None)
+    else:
+        maximum_observed_gap = None
     slot_gaps = [row for row in in_window if row.get("capture_status") in
                  ("missed_slot", "capture_timeout", "capture_failed", "transfer_failed", "storage_full")]
     for row in slot_gaps:
@@ -577,11 +1115,70 @@ def _scene4_frame_manifest_proof(frames: list[dict], reviews: list[dict],
             deduped_events.append({**event, "episode": episode,
                 "incident_id": f"{event['case_id']}:popup:episode:{episode}"})
         last_key, last_slot = key, slot
-    return {"complete": not errors and bool(in_window) and len(classified) == len(in_window),
+    observer_proof = _scene4_readonly_observation_proof(readonly_observations or [], begin, end,
+        expected_case_id, max_gap_seconds)
+    if observer_proof.get("complete"):
+        # The independent WMS/AA/mission stream establishes window coverage.
+        # Blank screenshots need no individual human review; however every
+        # native window episode must still have a SHA-bound visual positive.
+        visual_frame_ids = {str(event.get("frame_id", "")) for event in events}
+        observer_replaced_errors = (
+            "frame_capture_gap_exceeded:", "frame_expected_slot_missing:",
+            "frame_begin_coverage_gap_exceeded", "frame_end_coverage_gap_exceeded",
+            "frame_window_has_no_completed_capture", "frame_capture_or_transfer_gap:",
+            "frame_review_missing_or_duplicate:", "frame_review_pending_or_invalid:",
+            "frame_review_unknown:", "frame_negative_without_full_screen_review:",
+            "frame_clock_gap:")
+        retained_errors = []
+        for error in errors:
+            replaced = any(error == prefix or error.startswith(prefix) for prefix in observer_replaced_errors)
+            frame_prefix = next((prefix for prefix in ("frame_sha256_invalid:",
+                "frame_timestamp_nonfinite:", "frame_capture_duration_exceeded:")
+                if error.startswith(prefix)), None)
+            frame_ref = error[len(frame_prefix):] if frame_prefix else ""
+            screenshot_only = frame_prefix is not None
+            if screenshot_only and frame_ref and frame_ref not in visual_frame_ids:
+                replaced = True
+            if not replaced:
+                retained_errors.append(error)
+        errors = retained_errors
+        reviewed_events: list[dict] = []
+        for episode_index, observed_episode in enumerate(observer_proof.get("visible_native_episodes", []), 1):
+            key = tuple(observed_episode.get("identity_key", ()))
+            start_s, end_s = observed_episode.get("first_boottime_s"), observed_episode.get("last_boottime_s")
+            corroborating = [event for event in events if _scene4_native_identity_key(event) == key and
+                isinstance(event.get("capture_boottime_pre_s"), (int, float)) and
+                isinstance(event.get("capture_boottime_post_s"), (int, float)) and
+                isinstance(start_s, (int, float)) and isinstance(end_s, (int, float)) and
+                event["capture_boottime_post_s"] >= start_s and event["capture_boottime_pre_s"] <= end_s]
+            if not corroborating:
+                errors.append("observer_episode_missing_in-episode_visual_confirmation:" +
+                    ":".join(str(value) for value in key))
+                continue
+            # One reviewed full-screen frame confirms the content of this
+            # continuous, exact process/window generation episode. Repeated
+            # positive frames do not inflate its count.
+            selected = sorted(corroborating, key=lambda event: event["capture_boottime_pre_s"])[0]
+            reviewed_events.append({**selected, "episode": episode_index,
+                "incident_id": f"{expected_case_id}:popup:episode:{episode_index}",
+                "observer_first_boottime_s": start_s, "observer_last_boottime_s": end_s})
+        for event in events:
+            key = _scene4_native_identity_key(event)
+            if not any(tuple(episode.get("identity_key", ())) == key and
+                       isinstance(episode.get("first_boottime_s"), (int, float)) and
+                       isinstance(episode.get("last_boottime_s"), (int, float)) and
+                       event.get("capture_boottime_post_s", -1) >= episode["first_boottime_s"] and
+                       event.get("capture_boottime_pre_s", float("inf")) <= episode["last_boottime_s"]
+                       for episode in observer_proof.get("visible_native_episodes", [])):
+                errors.append(f"visual_native_event_not_in_readonly_window_stream:{event.get('frame_id')}")
+        deduped_events = reviewed_events
+    return {"complete": not errors and bool(in_window) and
+            (len(classified) == len(in_window) or observer_proof.get("complete") is True),
         "case_begin_boottime_s": begin, "case_end_boottime_s": end,
         "collection_end_boottime_s": collection_end,
         "target_period_seconds": SCENE4_FRAME_PERIOD_SECONDS,
         "maximum_allowed_capture_gap_seconds": max_gap_seconds,
+        "maximum_observed_gap_seconds": maximum_observed_gap,
         "expected_slot_count": len(in_window), "captured_frame_count": sum(
             row.get("capture_status") == "captured" for row in in_window),
         "reviewed_frame_count": len(classified), "unknown_or_unreviewed_frame_count": len(in_window)-len(classified),
@@ -589,7 +1186,131 @@ def _scene4_frame_manifest_proof(frames: list[dict], reviews: list[dict],
         "supplemental_cross_boundary_count": sum(
             str(row.get("supplemental_status", "")).startswith("cross_") for row in supplemental),
         "capture_gap_seconds": intervals, "frame_ids": [row.get("frame_id") for row in in_window],
-        "native_popup_events": deduped_events, "errors": errors}
+        "native_popup_events": deduped_events, "readonly_observation_proof": observer_proof,
+        "errors": errors}
+
+
+def _scene4_native_identity_key(row: dict) -> tuple[str, str, str, str, str, str]:
+    return (str(row.get("case_id", "")), str(row.get("mission_id", "")),
+            str(row.get("win_id", "")), str(row.get("pid", "")),
+            str(row.get("uid", "")), str(row.get("start_ticks", "")))
+
+
+def _scene4_readonly_observation_proof(observations: list[dict], begin: float | None,
+                                       end: float | None, case_id: str,
+                                       max_gap_seconds: float) -> dict:
+    """Validate the independent, per-command-complete native-window stream."""
+    errors: list[str] = []
+    if begin is None or end is None or end < begin:
+        return {"complete": False, "errors": ["observer_window_boundary_invalid"],
+                "visible_native_episodes": [], "observation_count": len(observations)}
+    rows = sorted((row for row in observations if str(row.get("case_id", "")) == case_id),
+                  key=lambda row: (row.get("boottime_pre_s")
+                      if isinstance(row.get("boottime_pre_s"), (int, float)) else float("inf"),
+                      row.get("observation_index", -1)))
+    in_window = []
+    required_commands = ("wms_pre", "aa_pre", "missions_pre", "wms_post", "aa_post", "missions_post")
+    for row in rows:
+        pre, post = row.get("boottime_pre_s"), row.get("boottime_post_s")
+        if not (isinstance(pre, (int, float)) and isinstance(post, (int, float)) and
+                math.isfinite(float(pre)) and math.isfinite(float(post)) and post >= pre):
+            errors.append(f"observer_clock_invalid:{row.get('observation_index')}")
+            continue
+        if post < begin or pre > end:
+            continue
+        if pre < begin <= post or pre <= end < post:
+            # Keep boundary-spanning samples as supplemental evidence only.
+            continue
+        if pre < begin or post > end:
+            continue
+        statuses = row.get("command_status")
+        if not isinstance(statuses, dict):
+            errors.append(f"observer_command_status_missing:{row.get('observation_index')}")
+            continue
+        for name in required_commands:
+            item = statuses.get(name)
+            if not isinstance(item, dict) or item.get("exit_code") != 0 or item.get("complete") is not True:
+                errors.append(f"observer_command_incomplete:{row.get('observation_index')}:{name}")
+        if row.get("error"):
+            errors.append(f"observer_command_error:{row.get('observation_index')}")
+        in_window.append(row)
+    intervals = []
+    for prior, current in zip(in_window, in_window[1:]):
+        if float(current["boottime_pre_s"]) < float(prior["boottime_post_s"]):
+            errors.append(f"observer_interval_overlap:{prior.get('observation_index')}:{current.get('observation_index')}")
+        gap = float(current["boottime_post_s"]) - float(prior["boottime_pre_s"])
+        intervals.append(gap)
+        if gap < 0 or gap > max_gap_seconds:
+            errors.append(f"observer_gap_exceeded:{prior.get('observation_index')}:{current.get('observation_index')}")
+    if not in_window:
+        errors.append("observer_window_has_no_samples")
+        max_observed = None
+    else:
+        first_gap = float(in_window[0]["boottime_post_s"]) - float(begin)
+        last_gap = float(end) - float(in_window[-1]["boottime_pre_s"])
+        if first_gap < 0 or first_gap > max_gap_seconds:
+            errors.append("observer_begin_coverage_gap_exceeded")
+        if last_gap < 0 or last_gap > max_gap_seconds:
+            errors.append("observer_end_coverage_gap_exceeded")
+        max_observed = max([first_gap, last_gap, *intervals], default=None)
+    # A positive episode requires an identity-complete visible candidate on
+    # each sample. Only a complete no-candidate observation can establish a
+    # disappearance; unknown samples never split an episode.
+    episodes: list[dict] = []
+    active: dict[tuple, dict] = {}
+    for row in in_window:
+        candidates = row.get("native_identity_candidates")
+        identity_status = row.get("identity_status")
+        complete_negative = (identity_status == "no_aa_low_memory_candidate" and
+            isinstance(row.get("command_status"), dict) and
+            all(row["command_status"].get(name, {}).get("exit_code") == 0 and
+                row["command_status"].get(name, {}).get("complete") is True and
+                row["command_status"].get(name, {}).get("inventory_complete") is True
+                for name in required_commands))
+        current_keys = set()
+        if identity_status in ("identity_candidate_observed", "identity_candidate_observed_partial") and not isinstance(candidates, list):
+            errors.append(f"observer_candidate_list_missing:{row.get('observation_index')}")
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    errors.append(f"observer_candidate_malformed:{row.get('observation_index')}")
+                    continue
+                if candidate.get("complete") is not True or candidate.get("visible") is not True:
+                    errors.append(f"observer_candidate_incomplete:{row.get('observation_index')}")
+                    continue
+                key = _scene4_native_identity_key({**candidate, "case_id": case_id})
+                if any(not value for value in key) or key[1] in ("None", ""):
+                    errors.append(f"observer_candidate_identity_incomplete:{row.get('observation_index')}")
+                    continue
+                current_keys.add(key)
+                episode = active.get(key)
+                if episode is None:
+                    episode = {"identity_key": key, "first_observation_index": row.get("observation_index"),
+                        "first_boottime_s": row.get("boottime_pre_s"),
+                        "last_observation_index": row.get("observation_index"),
+                        "last_boottime_s": row.get("boottime_post_s"), "observation_count": 0}
+                    episodes.append(episode)
+                    active[key] = episode
+                episode["last_observation_index"] = row.get("observation_index")
+                episode["last_boottime_s"] = row.get("boottime_post_s")
+                episode["observation_count"] += 1
+        if complete_negative:
+            active.clear()
+        elif identity_status == "identity_candidate_observed":
+            if not current_keys:
+                errors.append(f"observer_candidate_identity_missing:{row.get('observation_index')}")
+            active = {key: episode for key, episode in active.items() if key in current_keys}
+        else:
+            errors.append(f"observer_identity_unknown:{row.get('observation_index')}:{identity_status}")
+    return {"complete": not errors and bool(in_window), "errors": errors,
+        "observation_count": len(rows), "in_window_observation_count": len(in_window),
+        "supplemental_cross_boundary_count": sum(
+            isinstance(row.get("boottime_pre_s"), (int, float)) and
+            isinstance(row.get("boottime_post_s"), (int, float)) and
+            (row["boottime_pre_s"] < begin <= row["boottime_post_s"] or
+             row["boottime_pre_s"] <= end < row["boottime_post_s"]) for row in rows),
+        "max_observed_gap_seconds": max_observed, "visible_native_episodes": episodes,
+        "window_begin_boottime_s": begin, "window_end_boottime_s": end}
 
 
 def _scene4_revalidate_frame_manifest_files(manifest_path: str | Path,
@@ -597,7 +1318,9 @@ def _scene4_revalidate_frame_manifest_files(manifest_path: str | Path,
                                              case_begin_boottime_s: float,
                                              case_end_boottime_s: float,
                                              case_id: str,
-                                             collection_end_boottime_s: float | None = None) -> dict:
+                                             collection_end_boottime_s: float | None = None,
+                                             readonly_observations_path: str | Path | None = None,
+                                             readonly_observations_sha256: str | None = None) -> dict:
     """Re-run the Scene4 proof after a human edits the SHA-bound review JSONL."""
     def read_rows(path: str | Path) -> list[dict]:
         rows = []
@@ -615,9 +1338,25 @@ def _scene4_revalidate_frame_manifest_files(manifest_path: str | Path,
     except Exception as exc:
         return {"complete": False, "errors": [f"frame_review_file_read_error:{exc}"],
                 "manifest_path": str(manifest_path), "review_path": str(review_path)}
+    observations = []
+    if readonly_observations_path is not None:
+        try:
+            actual_sha = hashlib.sha256(Path(readonly_observations_path).read_bytes()).hexdigest()
+            if not readonly_observations_sha256 or actual_sha.lower() != readonly_observations_sha256.lower():
+                return {"complete": False, "errors": ["readonly_observations_sha256_missing_or_mismatch"],
+                    "manifest_path": str(manifest_path), "review_path": str(review_path),
+                    "readonly_observations_path": str(readonly_observations_path),
+                    "readonly_observations_sha256_expected": readonly_observations_sha256,
+                    "readonly_observations_sha256_actual": actual_sha}
+            observations = read_rows(readonly_observations_path)
+        except Exception as exc:
+            return {"complete": False, "errors": [f"readonly_observations_read_error:{exc}"],
+                "manifest_path": str(manifest_path), "review_path": str(review_path),
+                "readonly_observations_path": str(readonly_observations_path)}
     proof = _scene4_frame_manifest_proof(frames, reviews, case_begin_boottime_s,
         case_end_boottime_s, case_id=case_id,
-        collection_end_boottime_s=collection_end_boottime_s)
+        collection_end_boottime_s=collection_end_boottime_s,
+        readonly_observations=observations)
     proof.update(manifest_path=str(manifest_path), review_path=str(review_path),
         review_states={state: sum(row.get("review_classification") == state for row in reviews)
                        for state in (*SCENE4_FRAME_REVIEW_STATES, "pending_review")})
@@ -658,8 +1397,14 @@ def reconcile_scene4_frame_reviews(result_path: str | Path) -> Path:
             begin = prior_proof.get("case_begin_boottime_s")
             end = prior_proof.get("case_end_boottime_s")
             collection_end = prior_proof.get("collection_end_boottime_s")
+            observer_path = prior_proof.get("readonly_observations_path")
+            if observer_path:
+                observer_path = Path(observer_path)
+                if not observer_path.is_absolute():
+                    observer_path = source.parent / observer_path
             proof = _scene4_revalidate_frame_manifest_files(manifest_path, review_path,
-                begin, end, str(case.get("case_id", "")), collection_end)
+                begin, end, str(case.get("case_id", "")), collection_end, observer_path,
+                prior_proof.get("readonly_observations_sha256"))
             try:
                 manifest_rows = [json.loads(line) for line in manifest_path.read_text(
                     encoding="utf-8").splitlines() if line.strip()]
@@ -668,6 +1413,14 @@ def reconcile_scene4_frame_reviews(result_path: str | Path) -> Path:
                 proof["errors"] = list(proof.get("errors", [])) + [
                     f"frame_manifest_image_scan_failed:{exc}"]
                 proof["complete"] = False
+            try:
+                review_rows = [json.loads(line) for line in review_path.read_text(
+                    encoding="utf-8").splitlines() if line.strip()]
+            except Exception:
+                review_rows = []
+            visual_frame_ids = {str(row.get("frame_id", "")) for row in review_rows
+                if row.get("review_classification") in
+                    ("confirmed_native_low_memory", "confirmed_not_native_low_memory")}
             image_errors = []
             for frame in manifest_rows:
                 if frame.get("capture_status") != "captured":
@@ -682,7 +1435,8 @@ def reconcile_scene4_frame_reviews(result_path: str | Path) -> Path:
                 input_files.append({"case_id": case.get("case_id"), "kind": "frame_image",
                     "frame_id": frame.get("frame_id"), "path": str(image_path),
                     "sha256": actual_sha})
-                if actual_sha is None or actual_sha.lower() != str(frame.get("frame_sha256", "")).lower():
+                if (actual_sha is None or actual_sha.lower() != str(frame.get("frame_sha256", "")).lower()) and \
+                        str(frame.get("frame_id", "")) in visual_frame_ids:
                     image_errors.append(f"frame_image_missing_or_sha_mismatch:{frame.get('frame_id')}")
             if image_errors:
                 proof["errors"] = list(proof.get("errors", [])) + image_errors
@@ -691,7 +1445,10 @@ def reconcile_scene4_frame_reviews(result_path: str | Path) -> Path:
                 proof["native_popup_events"] = []
             else:
                 proof["image_integrity_complete"] = True
-            for label, path in (("manifest", manifest_path), ("reviews", review_path)):
+            for label, path in (("manifest", manifest_path), ("reviews", review_path),
+                                ("readonly_observations", observer_path)):
+                if path is None:
+                    continue
                 try:
                     file_digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
                 except OSError:
@@ -860,14 +1617,46 @@ def _scene4_frame_capture_result(raw: str, marker: str) -> dict:
         "exit_code": exit_code, "valid": valid}
 
 
+def _scene4_advance_frame_slot(slot: int) -> int:
+    """Advance once after each completed capture/transfer attempt."""
+    return slot + 1
+
+
 def _scene4_frame_identity_snapshot(session: "Session", frame: dict,
                                     wms_before_raw: str, wms_after_raw: str,
                                     aa_before_raw: str, aa_after_raw: str,
                                     mission_before_raw: str, mission_after_raw: str) -> dict:
     """Resolve any TaskManager LowMemoryAbility to fresh proc and visible WMS identity."""
-    if not getattr(session, "scene4_clock_probe_verified", False):
-        return {"status": "unknown_clock_helper_unverified", "candidates": [],
-                "errors": ["clock_helper_not_preverified"]}
+    # Legacy Scene4 can start frame capture without the oracle clock-domain
+    # initializer. Verify the configured helper hash once, then validate the
+    # actual capture's own BOOTTIME/MONOTONIC bracket. Do not require unrelated
+    # trace_clock setup for this identity-only path or delay the fixed launch.
+    scene4_cfg = session.config.get("scene4", {})
+    if not getattr(session, "scene4_frame_clock_hash_verified", False):
+        helper_path = str(scene4_cfg.get("oracle_clock_probe_remote_path", "")).strip()
+        expected_hash = str(scene4_cfg.get("oracle_clock_probe_sha256", "")).strip().lower()
+        if not helper_path or not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+            return {"status": "unknown_clock_helper_unverified", "candidates": [],
+                    "errors": ["clock_helper_path_or_hash_missing"]}
+        try:
+            hash_raw = session.device.shell("sha256sum " + quote(helper_path), timeout=10, check=False)
+        except Exception as exc:
+            return {"status": "unknown_clock_helper_unverified", "candidates": [],
+                    "errors": [f"clock_helper_hash_probe_failed:{exc}"]}
+        match = re.search(r"(?m)^([0-9a-fA-F]{64})\s+" + re.escape(helper_path) + r"\s*$", hash_raw)
+        actual_hash = match.group(1).lower() if match else None
+        if actual_hash != expected_hash:
+            return {"status": "unknown_clock_helper_unverified", "candidates": [],
+                    "errors": [f"clock_helper_hash_mismatch:expected={expected_hash},actual={actual_hash}"]}
+        session.scene4_frame_clock_hash_verified = True
+        session.result.setdefault("scene4_frame_clock_helper", {
+            "remote_path": helper_path, "expected_sha256": expected_hash,
+            "readback_sha256": actual_hash, "verified": True})
+    frame_marker = f"__S4_CAP_{int(frame.get('slot_index', 0)):06d}_"
+    capture_validation = _scene4_frame_capture_result(frame.get("capture_raw", ""), frame_marker)
+    if not capture_validation.get("valid"):
+        return {"status": "unknown_frame_clock_bracket", "candidates": [],
+                "errors": ["capture_clock_bracket_or_exit_invalid"]}
     pre_processes = _scene4_aa_process_inventory(aa_before_raw)
     post_processes = _scene4_aa_process_inventory(aa_after_raw)
     before_rows = _scene4_wms_window_inventory(wms_before_raw)
@@ -931,7 +1720,6 @@ def _scene4_frame_identity_snapshot(session: "Session", frame: dict,
             low_memory_mission_candidate_count=len(new_missions),
             new_window_ids=new_window_ids, baseline_window_inventory_complete=baseline.get("window_inventory_complete"))
         return identity
-    scene4_cfg = session.config.get("scene4", {})
     clock_path = str(scene4_cfg.get("oracle_clock_probe_remote_path", "")).strip()
     if not clock_path:
         identity.update(status="unknown_identity_clock_path_missing", errors=["clock_path_missing"])
@@ -983,7 +1771,6 @@ def _scene4_frame_identity_snapshot(session: "Session", frame: dict,
                                      identity_post_s >= identity_pre_s),
         "capture_to_identity_age_seconds": identity_post_s - frame.get("capture_boottime_post_s", identity_post_s)
             if identity_post_s is not None and isinstance(frame.get("capture_boottime_post_s"), (int, float)) else None}
-    frame_marker = f"__S4_CAP_{int(frame.get('slot_index', 0)):06d}_"
     capture_clock_raw = _scene4_marker_payload(frame.get("capture_raw", ""),
         frame_marker + "CLOCK_PRE__", frame_marker + "EXIT__")
     offsets = [value.get("boottime_s") - value.get("monotonic_s") for value in
@@ -1527,6 +2314,14 @@ def effective_settings(config: dict, profile: str) -> dict:
                                 calibration_peak_mib_levels=[128])
     return config
 
+def scene4_execution_engine(config: dict) -> str:
+    """Resolve Scene4 workload route only from an explicit profile selector."""
+    cfg = config.get("scene4", {})
+    legacy = cfg.get("execution_profile") == "legacy_peak_transition"
+    if legacy and cfg.get("oracle_cold_start_runner"):
+        raise ValueError("legacy peak-transition profile cannot use the six-cold-start oracle runner")
+    return "scene2" if legacy else "scene4"
+
 def scene3_calibration_coverage(config: dict, current_suite_hash: str) -> dict:
     """Describe reusable capacity evidence without claiming it calibrates this suite."""
     reference = config.get("scene3_calibration_reference", {})
@@ -1637,8 +2432,17 @@ class Session:
             self.result["scene3_calibration_coverage"] = scene3_calibration_coverage(
                 config, self.result["suite_hash"])
         elif scene == 4:
-            self.result["scene4_scope"] = "cold_reclaim_sensitivity_prevalidation"
-            self.result["scene4_candidate_only"] = True
+            legacy_route = config.get("scene4", {}).get("execution_profile") == "legacy_peak_transition"
+            self.result["scene4_scope"] = ("legacy_peak_transition_reproduction" if legacy_route else
+                                            "cold_reclaim_sensitivity_prevalidation")
+            self.result["scene4_candidate_only"] = not legacy_route
+            if legacy_route:
+                self.result["scene4_execution_route"] = {
+                    "profile": "legacy_peak_transition",
+                    "engine": "scene2_case",
+                    "reclaim_enabled": False,
+                    "hap_manifest": config.get("scene4", {}).get("hap_manifest"),
+                }
         save(self.output / "config.json", config)
 
     def mark(self, name: str, *, device_clock: tuple[float, int] | None = None, **extra) -> dict:
@@ -1785,6 +2589,114 @@ class Session:
                 finally:
                     identity_queue.task_done()
 
+        def readonly_observation_worker() -> None:
+            """Collect an independent WMS/AA/mission stream for the full case."""
+            obs_path = self.output / "ui" / f"{case_id}_readonly_observations.jsonl"
+            obs_path.parent.mkdir(parents=True, exist_ok=True)
+            obs_path.write_text("", encoding="utf-8")
+            state["readonly_observations_path"] = str(obs_path)
+            clock_path = str(self.config.get("scene4", {}).get("oracle_clock_probe_remote_path", "")).strip()
+            interval_ns = int(SCENE4_FRAME_PERIOD_SECONDS * 1e9)
+            next_due_ns = time.monotonic_ns()
+            index = 0
+            while not state["stop"].is_set():
+                now_ns = time.monotonic_ns()
+                if now_ns < next_due_ns and state["stop"].wait((next_due_ns-now_ns)/1e9):
+                    break
+                index += 1
+                marker = f"__S4_OBS_{index:06d}_"
+                command = ("echo " + quote(marker + "CLOCK_PRE__") + "; " + quote(clock_path) + "; "
+                    "echo " + quote(marker + "WMS_PRE__") + "; hidumper -s WindowManagerService -a '-a'; "
+                    "echo " + quote(marker + "WMS_PRE_RC__") + "$?; "
+                    "echo " + quote(marker + "AA_PRE__") + "; aa dump -r; echo " + quote(marker + "AA_PRE_RC__") + "$?; "
+                    "echo " + quote(marker + "MISSIONS_PRE__") + "; aa dump -l; echo " + quote(marker + "MISSIONS_PRE_RC__") + "$?; "
+                    "echo " + quote(marker + "WMS_POST__") + "; hidumper -s WindowManagerService -a '-a'; "
+                    "echo " + quote(marker + "WMS_POST_RC__") + "$?; "
+                    "echo " + quote(marker + "AA_POST__") + "; aa dump -r; echo " + quote(marker + "AA_POST_RC__") + "$?; "
+                    "echo " + quote(marker + "MISSIONS_POST__") + "; aa dump -l; echo " + quote(marker + "MISSIONS_POST_RC__") + "$?; "
+                    "echo " + quote(marker + "CLOCK_POST__") + "; " + quote(clock_path))
+                host_start_ns = time.monotonic_ns()
+                try:
+                    raw = self.device.shell(command, timeout=8, check=False)
+                    error = None
+                except Exception as exc:
+                    raw, error = "", str(exc)
+                host_end_ns = time.monotonic_ns()
+                raw_path = self.output / "ui" / f"{case_id}_readonly_observation_{index:06d}_raw.txt"
+                raw_path.write_text(raw, encoding="utf-8", newline="")
+                clock_pre_raw = _scene4_marker_payload(raw, marker + "CLOCK_PRE__", "WMS_PRE__")
+                clock_post_raw = _scene4_marker_payload(raw, marker + "CLOCK_POST__", "")
+                pre = _scene4_frame_clock(clock_pre_raw)
+                post = _scene4_frame_clock(clock_post_raw)
+                def section(label: str, following: str) -> str:
+                    return _scene4_marker_payload(raw, marker + label + "__", marker + following + "__")
+                def rc(label: str) -> int | None:
+                    match = re.search(re.escape(marker + label + "_RC__") + r"\s*(\d+)", raw)
+                    return int(match.group(1)) if match else None
+                def has_marker(label: str) -> bool:
+                    return marker + label + "__" in raw
+                wms_pre = section("WMS_PRE", "WMS_PRE_RC")
+                aa_pre = section("AA_PRE", "AA_PRE_RC")
+                missions_pre = section("MISSIONS_PRE", "MISSIONS_PRE_RC")
+                wms_post = section("WMS_POST", "WMS_POST_RC")
+                aa_post = section("AA_POST", "AA_POST_RC")
+                missions_post = section("MISSIONS_POST", "MISSIONS_POST_RC")
+                wms_pre_inventory = _scene4_wms_window_inventory(wms_pre)
+                wms_post_inventory = _scene4_wms_window_inventory(wms_post)
+                aa_pre_inventory = _scene4_aa_process_inventory(aa_pre)
+                aa_post_inventory = _scene4_aa_process_inventory(aa_post)
+                mission_target_blocks = lambda value: [block for block in re.split(
+                    r"(?=^\s*Mission ID #)", value or "", flags=re.M)
+                    if "LowMemoryAbility" in block and "com.huawei.hmos.taskmanager" in block]
+                mission_pre_count = len(parse_low_memory_missions(missions_pre, include_process_identity=True))
+                mission_post_count = len(parse_low_memory_missions(missions_post, include_process_identity=True))
+                command_status = {
+                    "wms_pre": {"exit_code": rc("WMS_PRE"), "complete": has_marker("WMS_PRE") and bool(wms_pre.strip()), "inventory_complete": wms_pre_inventory.get("complete") is True},
+                    "aa_pre": {"exit_code": rc("AA_PRE"), "complete": has_marker("AA_PRE") and _scene4_observer_aa_inventory_complete(aa_pre), "inventory_complete": _scene4_observer_aa_inventory_complete(aa_pre)},
+                    "missions_pre": {"exit_code": rc("MISSIONS_PRE"), "complete": has_marker("MISSIONS_PRE") and _scene4_observer_mission_inventory_complete(missions_pre), "inventory_complete": _scene4_observer_mission_inventory_complete(missions_pre)},
+                    "wms_post": {"exit_code": rc("WMS_POST"), "complete": has_marker("WMS_POST") and bool(wms_post.strip()), "inventory_complete": wms_post_inventory.get("complete") is True},
+                    "aa_post": {"exit_code": rc("AA_POST"), "complete": has_marker("AA_POST") and _scene4_observer_aa_inventory_complete(aa_post), "inventory_complete": _scene4_observer_aa_inventory_complete(aa_post)},
+                    "missions_post": {"exit_code": rc("MISSIONS_POST"), "complete": has_marker("MISSIONS_POST") and _scene4_observer_mission_inventory_complete(missions_post), "inventory_complete": _scene4_observer_mission_inventory_complete(missions_post)}}
+                # Resolve OS identity independently of a missing screenshot. This
+                # is metadata evidence only; it cannot create visual confirmation.
+                synthetic_slot = 100000 + index
+                capture_marker = f"__S4_CAP_{synthetic_slot:06d}_"
+                capture_raw = (capture_marker + "CLOCK_PRE__\n" + clock_pre_raw + "\n" +
+                    capture_marker + "EXIT__0\n" + capture_marker + "CLOCK_POST__\n" + clock_post_raw)
+                identity_frame = {"case_id": case_id, "slot_index": synthetic_slot,
+                    "capture_boottime_pre_s": pre.get("boottime_s"),
+                    "capture_boottime_post_s": post.get("boottime_s"),
+                    "capture_raw": capture_raw}
+                try:
+                    if all(item["exit_code"] == 0 and item["complete"] for item in command_status.values()):
+                        identity = _scene4_frame_identity_snapshot(self, identity_frame,
+                            wms_pre, wms_post, aa_pre, aa_post, missions_pre, missions_post)
+                    else:
+                        identity = {"status": "unknown_observation_command_incomplete", "candidates": [],
+                            "errors": [name for name, item in command_status.items()
+                                if item["exit_code"] != 0 or not item["complete"]]}
+                except Exception as exc:
+                    identity = {"status": "unknown_identity_probe_error", "candidates": [],
+                                "errors": [str(exc)]}
+                record = {"case_id": case_id, "observation_index": index,
+                    "host_start_monotonic_ns": host_start_ns, "host_end_monotonic_ns": host_end_ns,
+                    "host_duration_seconds": (host_end_ns-host_start_ns)/1e9,
+                    "boottime_pre_s": pre.get("boottime_s"), "boottime_post_s": post.get("boottime_s"),
+                    "raw_path": str(raw_path), "raw_sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+                    "error": error, "visual_frame": None, "command_status": command_status,
+                    "identity_status": identity.get("status"),
+                    "native_identity_candidates": identity.get("candidates", []),
+                    "identity": identity,
+                    "wms_pre_raw": wms_pre, "aa_pre_raw": aa_pre,
+                    "missions_pre_raw": missions_pre, "wms_post_raw": wms_post,
+                    "aa_post_raw": aa_post, "missions_post_raw": missions_post}
+                with obs_path.open("a", encoding="utf-8", newline="") as stream:
+                    stream.write(json.dumps(record, sort_keys=True, allow_nan=False) + "\n")
+                    stream.flush()
+                state["readonly_observations_path"] = str(obs_path)
+                state["readonly_observation_count"] = index
+                next_due_ns = time.monotonic_ns() + interval_ns
+
         def worker() -> None:
             slot = 0
             anchor_host_ns = None
@@ -1895,6 +2807,9 @@ class Session:
                     "full_screen_reviewed": False, "reviewer": None, "reviewed_at": None,
                     "candidate_identity_count": len(row.get("native_identity_candidates", []))}
                 append_row(row, review)
+                # Consume exactly one sequence number for every completed
+                # capture/transfer attempt, before any continue branch.
+                slot = _scene4_advance_frame_slot(slot)
                 if not captured:
                     state.setdefault("capture_gaps", []).append({"frame_id": frame_id,
                         "error": row.get("capture_error") or "screen_capture_failed"})
@@ -1904,13 +2819,13 @@ class Session:
                     # overlapping captures.
                     if capture_error:
                         state["error"] = "screen_capture_completion_unknown_after_timeout"
+                        # The independent observation stream was started with
+                        # the frame worker and continues after this timeout.
                         break
-                    slot += 1
                     continue
                 if row.get("transfer_status") != "received":
                     state.setdefault("capture_gaps", []).append({"frame_id": frame_id,
                         "error": row.get("transfer_error") or "frame_transfer_failed"})
-                    slot += 1
                     continue
                 if state["stop"].is_set():
                     break
@@ -1920,6 +2835,10 @@ class Session:
             name=f"scene4-frame-identity-{case_id}", daemon=True)
         state["identity_worker"] = identity_thread
         identity_thread.start()
+        observation = threading.Thread(target=readonly_observation_worker,
+            name=f"scene4-readonly-observation-{case_id}", daemon=True)
+        state["readonly_observation_worker"] = observation
+        observation.start()
         thread = threading.Thread(target=worker, name=f"scene4-frame-{case_id}", daemon=True)
         state["worker"] = thread
         thread.start()
@@ -1947,6 +2866,11 @@ class Session:
             identity_thread.join(timeout=60)
             if identity_thread.is_alive():
                 state["error"] = "frame_identity_worker_join_timeout"
+        observation_thread = state.get("readonly_observation_worker")
+        if observation_thread:
+            observation_thread.join(timeout=12)
+            if observation_thread.is_alive():
+                state.setdefault("secondary_errors", []).append("readonly_observation_worker_join_timeout")
         cleanup = {"attempted": False, "verified_absent": False}
         if thread and not thread.is_alive():
             remote_glob = self.remote + f"/scene4_{self.id}_{case_id}_frame_*.png"
@@ -1955,9 +2879,21 @@ class Session:
                 "; if ls " + remote_glob + " >/dev/null 2>&1; then echo present; else echo absent; fi",
                 timeout=8, check=False)
             cleanup["verified_absent"] = cleanup["raw"].strip().endswith("absent")
+        observation_rows = []
+        observation_path = state.get("readonly_observations_path")
+        observation_sha256 = None
+        if observation_path:
+            try:
+                observation_bytes = Path(observation_path).read_bytes()
+                observation_sha256 = hashlib.sha256(observation_bytes).hexdigest()
+                observation_rows = [json.loads(line) for line in observation_bytes.decode(
+                    "utf-8").splitlines() if line.strip()]
+            except (OSError, ValueError) as exc:
+                state.setdefault("secondary_errors", []).append(f"readonly_observations_read_failed:{exc}")
         proof = _scene4_frame_manifest_proof(state["rows"], state["reviews"],
             state.get("case_begin_boottime_s"), case_end_boottime_s, case_id=case_id,
-            collection_end_boottime_s=collection_end_boottime_s)
+            collection_end_boottime_s=collection_end_boottime_s,
+            readonly_observations=observation_rows)
         proof.update({"frames": state["rows"], "reviews": state["reviews"],
             "manifest_path": state["manifest_path"], "review_path": state["review_path"],
             "free_bytes_at_start": state["free_bytes_at_start"],
@@ -1965,6 +2901,10 @@ class Session:
             "identity_updates_path": state.get("identity_updates_path"),
             "capture_gaps": state.get("capture_gaps", []),
             "identity_gaps": state.get("identity_gaps", []),
+            "readonly_observations_path": state.get("readonly_observations_path"),
+            "readonly_observations_sha256": observation_sha256,
+            "readonly_observation_count": state.get("readonly_observation_count", 0),
+            "readonly_observations": observation_rows,
             "worker_error": state.get("error"), "worker_finished": bool(thread and not thread.is_alive()),
             "remote_temp_cleanup": cleanup})
         return proof
@@ -2473,6 +3413,9 @@ class Session:
                                   start_uptime: float, end_uptime: float,
                                   anchor_wall_ms: int, anchor_uptime: float, *,
                                   scene4_cold_only: bool = False,
+                                  scene4_peak_transition: bool = False,
+                                  daily_attempt_rows: dict[str, list[dict]] | None = None,
+                                  daily_journal_readback_complete_bundles: set[str] | None = None,
                                   journal_readback_complete_bundles: set[str] | None = None,
                                   journal_case_ids: dict[str, str] | None = None,
                                   startup_failure_bundles: set[str] | None = None) -> dict:
@@ -2493,6 +3436,9 @@ class Session:
             raw, case_id, observed, targets_uid, attempts, start_uptime, end_uptime,
             anchor_wall_ms, anchor_uptime, str(path.relative_to(self.output)),
             scene4_cold_only=scene4_cold_only,
+            scene4_peak_transition=scene4_peak_transition,
+            daily_attempt_rows=daily_attempt_rows,
+            daily_journal_readback_complete_bundles=daily_journal_readback_complete_bundles,
             journal_readback_complete_bundles=journal_readback_complete_bundles,
             journal_case_ids=journal_case_ids,
             startup_failure_bundles=startup_failure_bundles)
@@ -2692,12 +3638,15 @@ class Session:
 
     def launch_test(self, bundle: str, case_id: str, daily: int, peak: int, hold: int,
                     lifetime: int, file_mib: int = 0, seed: int = 1,
-                    await_peak: bool = False) -> None:
+                    await_peak: bool = False, no_periodic_msync: bool = False) -> None:
         self.device.app(bundle)
-        self.device.launch(bundle, params={"case_id": case_id, "daily_mib": daily,
+        params = {"case_id": case_id, "daily_mib": daily,
                            "peak_mib": peak, "file_mib": file_mib, "hold_seconds": hold,
                            "lifetime_seconds": lifetime, "seed": seed, "bundle": bundle,
-                           "daily_case_id": case_id + "_daily", "await_peak": int(await_peak)})
+                           "daily_case_id": case_id + "_daily", "await_peak": int(await_peak)}
+        if no_periodic_msync:
+            params["no_periodic_msync"] = 1
+        self.device.launch(bundle, params=params)
 
     def ui_evidence(self, case_id: str, targets: list[str], observation_phase: str = "unspecified",
                     allow_case_attribution: bool = True, scene4_fast_layout: bool = False) -> set[str]:
@@ -3219,6 +4168,10 @@ class Session:
                 "primary_count_observed": cumulative_observed,
                 "measurement_complete": bool(scene4_result.get("measurement_complete")),
             }
+        elif self.scene == 4 and self.result.get("scene4_fast_frame_counts_unknown"):
+            self.result["counts"]["low_memory_popup"] = None
+            self.result["counts"]["total_events"] = None
+            self.result["counts"]["primary_count_observed"] = False
         self.result["events"] = self.book.export()
         save(self.output / "events.json", self.book.export())
         with (self.output / "events.csv").open("w", encoding="utf-8-sig", newline="") as stream:
@@ -3262,11 +4215,11 @@ class Session:
             self.result["scene4_target"] = {
                 "minimum_total_events": int(short_cfg["target_total_events_min"]),
                 "maximum_total_events": int(short_cfg["target_total_events_max"]),
-                "category_sum": int(counts.get("total_events", 0)),
-                "all_three_categories_present": coverage,
+                "category_sum": (int(counts["total_events"]) if counts.get("total_events") is not None else None),
+                "all_three_categories_present": (coverage if counts.get("low_memory_popup") is not None else None),
                 "met_in_raw_counts": (coverage and int(short_cfg["target_total_events_min"]) <=
-                                      int(counts.get("total_events", 0)) <=
-                                      int(short_cfg["target_total_events_max"])),
+                                      int(counts["total_events"]) <= int(short_cfg["target_total_events_max"]))
+                                      if counts.get("total_events") is not None else None,
                 "authoritative_after_ui_audit": False,
                 "sensitivity_only_no_optimization_claim": True,
             }
@@ -3432,9 +4385,29 @@ def validate_environment(session: Session, formal: bool = False) -> dict:
                                json.dumps(resident_old, ensure_ascii=False))
     session.result["app_uids"] = {bundle: session.device.app(bundle)["uid"]
                                   for bundle in session.config["test_apps"]}
-    manifest = ROOT / ("bin/scene4_apps/manifest.json" if session.scene == 4 else "bin/apps/manifest.json")
+    configured_manifest = (session.config.get("scene4", {}).get("hap_manifest")
+                           if session.scene == 4 else None)
+    manifest = (ROOT / configured_manifest if configured_manifest else
+                ROOT / ("bin/scene4_apps/manifest.json" if session.scene == 4 else "bin/apps/manifest.json"))
     if manifest.is_file():
-        session.result["app_build_manifest"] = read(manifest)
+        manifest_rows = read(manifest)
+        session.result["app_build_manifest"] = manifest_rows
+        if session.scene == 4 and session.config.get("scene4", {}).get("execution_profile") == "legacy_peak_transition":
+            if not isinstance(manifest_rows, list):
+                raise RuntimeError("legacy Scene4 HAP manifest must be a list")
+            by_bundle = {str(row.get("bundle")): row for row in manifest_rows if isinstance(row, dict)}
+            if set(by_bundle) != set(session.config["test_apps"]):
+                raise RuntimeError("legacy Scene4 HAP manifest bundle set differs from configured eight apps")
+            for bundle, row in by_bundle.items():
+                hap = (ROOT / str(row.get("path", ""))).resolve()
+                expected = str(row.get("sha256", "")).lower()
+                if not hap.is_file() or not re.fullmatch(r"[0-9a-f]{64}", expected):
+                    raise RuntimeError(f"legacy Scene4 HAP path/hash missing for {bundle}")
+                actual_hash = hashlib.sha256(hap.read_bytes()).hexdigest()
+                if actual_hash != expected:
+                    raise RuntimeError(f"legacy Scene4 HAP SHA mismatch for {bundle}")
+    elif session.scene == 4 and session.config.get("scene4", {}).get("execution_profile") == "legacy_peak_transition":
+        raise RuntimeError("legacy Scene4 HAP manifest does not exist")
     return env
 
 def scene1(session: Session) -> Path:
@@ -3664,6 +4637,9 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                 strategy: str = "concurrent_launch_peak_hold_notify", seed: int | None = None,
                 kind: str | None = None, file_mib: int = 0) -> dict:
     d, cfg = session.device, session.config["scene4" if session.scene == 4 else "scene2"]
+    scene4_v3_profile = (session.scene == 4 and
+        cfg.get("execution_profile") == "legacy_peak_transition" and
+        cfg.get("oracle_profile") == "peak_transition_os_snapshot")
     session.owned_page_files.update((bundle, case_id) for bundle in bundles)
     popup_baseline = None
     try:
@@ -3673,6 +4649,33 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                           "missions": baseline_missions,
                           "raw": baseline_raw}
         session.popup_baselines[case_id] = popup_baseline
+        if scene4_v3_profile:
+            # Reuse the same lightweight WMS/AA identity parsers as the fast
+            # Scene4 frame worker. This is a pre-BEGIN baseline only; no tree
+            # dump or layout walk is performed in the measured window.
+            wms_baseline_raw = d.shell("hidumper -s WindowManagerService -a '-a'", timeout=8, check=False)
+            aa_baseline_raw = d.shell("aa dump -r", timeout=8, check=False)
+            wms_baseline = _scene4_wms_window_inventory(wms_baseline_raw)
+            aa_baseline = _scene4_aa_process_inventory(aa_baseline_raw)
+            visible_window_ids = []
+            taskmanager_pids = {row.get("pid") for row in aa_baseline.get("rows", [])
+                if row.get("bundle") == "com.huawei.hmos.taskmanager" and row.get("pid") is not None}
+            for wms_row in wms_baseline.get("rows", []):
+                pid, win_id = wms_row.get("pid"), wms_row.get("win_id")
+                if pid not in taskmanager_pids or win_id is None:
+                    continue
+                detail = d.shell("hidumper -s WindowManagerService -a " + quote(f"-w {win_id}"),
+                                 timeout=5, check=False)
+                parsed = _scene4_wms_window_snapshot(wms_baseline_raw, detail, pid, win_id)
+                if parsed.get("known") and parsed.get("visible") is True:
+                    visible_window_ids.append(int(win_id))
+            popup_baseline.update({"window_ids": sorted(set(visible_window_ids)),
+                "window_inventory_complete": bool(wms_baseline.get("complete") and aa_baseline.get("complete")),
+                "window_inventory_raw": wms_baseline_raw, "aa_inventory_raw": aa_baseline_raw,
+                "window_inventory_count": len(wms_baseline.get("rows", [])),
+                "window_inventory_reported_count": wms_baseline.get("reported_count"),
+                "window_inventory_parsed_count": wms_baseline.get("parsed_count"),
+                "taskmanager_visible_window_ids": sorted(set(visible_window_ids))})
     except Exception as exc:
         session.result.setdefault("ui_evidence_errors", []).append({
             "case_id": case_id, "phase": "baseline", "error": str(exc)})
@@ -3685,6 +4688,8 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             session.result["measurement_evidence_complete"] = False
     case_begin_uptime = None
     case_begin_wall_ms = None
+    fast_frame_capture_state = None
+    fast_frame_proof = None
     try:
         session.mark("case_begin", case_id=case_id, bundles=bundles, peak_mib=peak, hold_seconds=hold,
                      strategy=strategy, daily_mib=cfg["daily_mib"])
@@ -3692,6 +4697,32 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
         if popup_baseline is not None:
             popup_baseline["case_begin_wall_ms"] = case_begin_wall_ms
             popup_baseline["case_begin_uptime_seconds"] = case_begin_uptime
+            popup_baseline["case_begin_boottime_seconds"] = case_begin_uptime
+            if scene4_v3_profile:
+                baseline_record = {"case_id": case_id,
+                    **{key: value for key, value in popup_baseline.items() if key not in ("raw", "window_inventory_raw", "aa_inventory_raw")}}
+                session.result.setdefault("popup_case_baselines", []).append(baseline_record)
+                baseline_path = session.output / "ui" / f"{case_id}_baseline_missions.txt"
+                baseline_path.parent.mkdir(parents=True, exist_ok=True)
+                baseline_path.write_text(popup_baseline.get("raw", ""), encoding="utf-8")
+                (session.output / "ui" / f"{case_id}_baseline_wms.txt").write_text(
+                    popup_baseline.get("window_inventory_raw", ""), encoding="utf-8")
+                (session.output / "ui" / f"{case_id}_baseline_aa.txt").write_text(
+                    popup_baseline.get("aa_inventory_raw", ""), encoding="utf-8")
+        if scene4_v3_profile and case_begin_uptime is not None:
+            try:
+                fast_frame_capture_state = session.start_scene4_frame_capture(
+                    case_id, case_begin_uptime,
+                    float(cfg.get("ready_timeout_seconds", 180)) + float(hold) + 10.0)
+                session.result.setdefault("scene4_fast_frame_capture_started", []).append({
+                    "case_id": case_id, "case_begin_boottime_s": case_begin_uptime,
+                    "capture_period_seconds": SCENE4_FRAME_PERIOD_SECONDS,
+                    "preflight_complete": fast_frame_capture_state.get("preflight_complete"),
+                    "manifest_path": fast_frame_capture_state.get("manifest_path")})
+            except Exception as exc:
+                session.result.setdefault("case_evidence_gaps", []).append({
+                    "case_id": case_id, "reason": "fast_frame_capture_start_failed", "error": str(exc)})
+                session.result["measurement_evidence_complete"] = False
     except Exception as exc:
         session.result.setdefault("case_evidence_gaps", []).append({
             "case_id": case_id, "reason": "case_begin_host_marker_failed", "error": str(exc)})
@@ -3703,6 +4734,8 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
     ready_deadline = min(case_started_mono + cfg["ready_timeout_seconds"], case_deadline)
     records: dict[str, list[dict]] = {bundle: [] for bundle in bundles}
     daily_records: dict[str, list[dict]] = {bundle: [] for bundle in bundles}
+    profile_daily_journal_complete: set[str] = set()
+    profile_peak_journal_complete: set[str] = set()
     observed_pids: dict[int, list[dict]] = {}
     pre_promote_identity_checks: list[dict] = []
     observed_daily_private = {bundle: 0 for bundle in bundles}
@@ -3734,7 +4767,8 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
         try:
             session.launch_test(bundle, case_id, cfg["daily_mib"], peak, hold,
                                 cfg["lifetime_seconds"], file_mib=file_mib,
-                                seed=seed, await_peak=True)
+                                seed=seed, await_peak=True,
+                                no_periodic_msync=bool(cfg.get("oracle_file_dirty_variant", False)))
         except Exception as exc:
             errors[bundle] = str(exc)
 
@@ -3928,11 +4962,18 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             daily_start = time.monotonic()
             reclaim_diagnostics["snapshots"].append(
                 scene4_reclaim_snapshot(session, case_id, bundles, "daily_cold_begin"))
-            time.sleep(float(cfg.get("daily_cold_seconds", 0)))
-            reclaim_diagnostics["snapshots"].append(
-                scene4_reclaim_snapshot(session, case_id, bundles, "daily_cold_end"))
             reclaim_diagnostics["daily_cold_seconds_requested"] = float(cfg.get("daily_cold_seconds", 0))
-            reclaim_diagnostics["daily_cold_seconds_observed"] = time.monotonic() - daily_start
+            if not scene4_v3_profile:
+                time.sleep(float(cfg.get("daily_cold_seconds", 0)))
+                reclaim_diagnostics["snapshots"].append(
+                    scene4_reclaim_snapshot(session, case_id, bundles, "daily_cold_end"))
+                reclaim_diagnostics["daily_cold_seconds_observed"] = time.monotonic() - daily_start
+            else:
+                # The profile's 15-second daily-cold window starts only after
+                # marker/reader/private-memory preparation below, so T cannot
+                # drift behind slow setup reads. The window itself is measured.
+                reclaim_diagnostics["daily_cold_seconds_observed"] = None
+                reclaim_diagnostics["profile_window_deferred_until_measurement_begin"] = True
         except Exception as exc:
             reclaim_diagnostics.setdefault("errors", []).append({"phase": "daily_cold", "error": str(exc)})
             session.result.setdefault("telemetry_errors", []).append({
@@ -3971,17 +5012,201 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
         except Exception as exc:
             daily_barrier_complete = False
             session.result.setdefault("sampling_errors", []).append({"case_id": case_id,
-                "error": str(exc), "classification": "unknown before peak; promote withheld"})
+                                                                       "error": str(exc), "classification": "unknown before peak; promote withheld"})
+    profile_window = None
+    profile_window_deadline_boot = None
+    dirty_prepare_result = None
+    dirty_prepare_complete = True
+    if daily_barrier_complete and scene4_v3_profile and bool(cfg.get("oracle_file_dirty_variant", False)):
+        try:
+            dirty_prepare_result = _scene4_dirty_prepare(
+                session, case_id, bundles,
+                float(cfg.get("oracle_redirty_prepare_timeout_s", 90)))
+            dirty_prepare_result["completed_boottime_s"] = float(d.shell("cat /proc/uptime").split()[0])
+            reclaim_diagnostics["dirty_file_prepare"] = dirty_prepare_result
+            dirty_prepare_complete = bool(dirty_prepare_result.get("complete"))
+            if not dirty_prepare_complete:
+                session.result.setdefault("case_evidence_gaps", []).append({
+                    "case_id": case_id, "reason": "dirty_file_redirty_or_minimize_unproven",
+                    "bundles": dirty_prepare_result.get("errors", {})})
+                session.result["measurement_evidence_complete"] = False
+        except Exception as exc:
+            dirty_prepare_complete = False
+            reclaim_diagnostics["dirty_file_prepare"] = {
+                "complete": False, "error": str(exc),
+                "classification": "dirty input and pre-reclaim background state unknown"}
+            session.result.setdefault("case_evidence_gaps", []).append({
+                "case_id": case_id, "reason": "dirty_file_prepare_failed", "error": str(exc)})
+            session.result["measurement_evidence_complete"] = False
+    if daily_barrier_complete and scene4_v3_profile:
+        window_seconds = float(cfg.get("daily_cold_seconds", 0))
+        # Anchor the fixed window immediately after the common preparation
+        # barrier. Setup/registration failures consume this same interval and
+        # can never silently shorten it or move the promote deadline.
+        window_anchor_host_start = time.monotonic()
+        try:
+            window_anchor_boot = float(d.shell("cat /proc/uptime").split()[0])
+        except Exception as exc:
+            window_anchor_boot = None
+            session.result.setdefault("case_evidence_gaps", []).append({
+                "case_id": case_id, "reason": "fixed_profile_window_boot_anchor_missing",
+                "error": str(exc)})
+            session.result["measurement_evidence_complete"] = False
+        window_anchor_host_end = time.monotonic()
+        window_start_host = (window_anchor_host_start + window_anchor_host_end) / 2.0
+        host_deadline = window_start_host + window_seconds
+        start_boot = window_anchor_boot
+        deadline_boot = (window_anchor_boot + window_seconds) if window_anchor_boot is not None else None
+        profile_window_deadline_boot = deadline_boot
+        try:
+            if dirty_prepare_complete and deadline_boot is not None:
+                profile_window = _scene4_legacy_v3_window(
+                    session, case_id, bundles, daily_records, window_seconds, peak,
+                    int(cfg.get("daily_mib", 0)),
+                    window_start_host_monotonic=window_start_host,
+                    window_start_boottime_s=start_boot)
+                # Function preflight is inside the already-running fixed
+                # interval. It cannot shift BOOTTIME T or add a wait.
+            else:
+                # Preserve the A/B timing even when the dirty-file proof is
+                # unknown. No schema row is published and no reclaim action is
+                # attempted for an unproven dirty input.
+                pass
+        except Exception as exc:
+            reclaim_diagnostics["peak_transition_profile"] = {
+                "error": str(exc), "window_seconds": window_seconds,
+                "window_start_boottime_s": start_boot,
+                "deadline_boottime_s": deadline_boot,
+                "host_deadline_monotonic": host_deadline,
+                "window_anchor_host_start_monotonic": window_anchor_host_start,
+                "window_anchor_host_end_monotonic": window_anchor_host_end,
+                "registered": False,
+                "classification": "preflight failed; preserve fixed promote deadline and record oracle unknown"}
+            session.result.setdefault("case_evidence_gaps", []).append({
+                "case_id": case_id, "reason": "peak_transition_profile_preflight_failed",
+                "error": str(exc)})
+            session.result["measurement_evidence_complete"] = False
+            session.result.setdefault("telemetry_errors", []).append({
+                "case_id": case_id, "source": f"scene4_peak_transition_schema{2 if cfg.get('oracle_backend') == 'force_shrink_all' else 3}", "error": str(exc),
+                "classification": "oracle effect unknown; workload timing continues unchanged"})
+        while time.monotonic() < host_deadline:
+            time.sleep(min(0.05, max(0.0, host_deadline - time.monotonic())))
+        if profile_window is not None:
+            # Request stop at the fixed deadline. Do not join before dispatching
+            # promote. A read-only snapshot may still be in progress; that alone
+            # is not a measurement failure and must never hold application start.
+            profile_window["stop"].set()
+            state = profile_window["writer_state"]
+            with profile_window["writer_lock"]:
+                state["stop_requested_host_monotonic_ns"] = time.monotonic_ns()
+                state["snapshot_inflight_at_stop"] = bool(state.get("snapshot_inflight"))
+                state["publish_inflight_at_stop"] = bool(state.get("publish_inflight"))
+            reclaim_diagnostics["peak_transition_profile"] = {
+                "event_id": profile_window["event_id"],
+                "schedule_remote": profile_window["schedule_remote"],
+                "local_schedule_path": str(Path(profile_window["local_schedule_path"]).relative_to(session.output)),
+                "observations_path": str(Path(profile_window["observations_path"]).relative_to(session.output)),
+                "window_start_boottime_s": start_boot,
+                "deadline_boottime_s": deadline_boot,
+                "host_deadline_monotonic": host_deadline,
+                "window_anchor_host_start_monotonic": window_anchor_host_start,
+                "window_anchor_host_end_monotonic": window_anchor_host_end,
+                "registered": bool(profile_window["writer_state"].get("registered")),
+                "rows_written": int(profile_window["writer_state"].get("rows_written", 0)),
+                "refresh_rounds": int(profile_window["writer_state"].get("rounds", 0)),
+                "candidate_bundles": list(profile_window["writer_state"].get("candidate_bundles", [])),
+                "errors": list(profile_window["writer_state"].get("errors", [])),
+                "planned_needed_bytes": profile_window["planned_needed_bytes"],
+                "control_readback": profile_window["control_readback"],
+                "writer_stop_requested_at_deadline": True,
+                "snapshot_inflight_at_stop": bool(state.get("snapshot_inflight_at_stop")),
+                "publish_inflight_at_stop": bool(state.get("publish_inflight_at_stop"))}
+        elif "peak_transition_profile" not in reclaim_diagnostics:
+            reclaim_diagnostics["peak_transition_profile"] = {
+                "window_start_boottime_s": start_boot, "deadline_boottime_s": deadline_boot,
+                "host_deadline_monotonic": host_deadline,
+                "window_anchor_host_start_monotonic": window_anchor_host_start,
+                "window_anchor_host_end_monotonic": window_anchor_host_end,
+                "registered": False,
+                "rows_written": 0, "writer_stopped_by_deadline": True,
+                "errors": ["dirty_file_prepare_incomplete_no_schedule_written"]
+                    if not dirty_prepare_complete else ["peak_transition_window_preflight_failed"]}
     promote_errors = {}
+    promote_call_timings: dict[str, dict] = {}
+    promote_timing_lock = threading.Lock()
     if daily_barrier_complete:
-        promote_started_ms = start_ms
+        promote_started_ms = (int(start_ms + (profile_window_deadline_boot - start_uptime) * 1000)
+                              if profile_window_deadline_boot is not None else start_ms)
+        if profile_window is not None:
+            dispatch_host_start = time.monotonic()
+            reclaim_diagnostics["peak_transition_profile"]["promote_dispatch_host_start_monotonic"] = dispatch_host_start
+            reclaim_diagnostics["peak_transition_profile"]["promote_expected_wall_ms_from_begin_anchor"] = promote_started_ms
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(bundles)) as pool:
-            futures = {pool.submit(d.promote, bundle, case_id): bundle for bundle in bundles}
+            def timed_promote(bundle: str):
+                host_start_ns = time.monotonic_ns()
+                try:
+                    return d.promote(bundle, case_id)
+                finally:
+                    host_end_ns = time.monotonic_ns()
+                    with promote_timing_lock:
+                        promote_call_timings[bundle] = {
+                            "host_start_monotonic_ns": host_start_ns,
+                            "host_end_monotonic_ns": host_end_ns,
+                            "duration_seconds": (host_end_ns-host_start_ns)/1e9}
+            futures = {pool.submit(timed_promote, bundle): bundle for bundle in bundles}
+            if profile_window is not None:
+                dispatch_submitted_host = time.monotonic()
+                reclaim_diagnostics["peak_transition_profile"]["promote_requests_submitted_host_monotonic"] = \
+                    dispatch_submitted_host
+                reclaim_diagnostics["peak_transition_profile"]["promote_requests_submitted_host_monotonic_ns"] = \
+                    time.monotonic_ns()
+                clock_host_start = time.monotonic()
+                try:
+                    reclaim_diagnostics["peak_transition_profile"]["promote_dispatch_following_boottime_sample_s"] = \
+                        float(d.shell("cat /proc/uptime").split()[0])
+                except Exception as exc:
+                    reclaim_diagnostics["peak_transition_profile"]["promote_dispatch_boottime_sample_error"] = str(exc)
+                reclaim_diagnostics["peak_transition_profile"]["promote_dispatch_clock_sample_host_start"] = clock_host_start
+                reclaim_diagnostics["peak_transition_profile"]["promote_dispatch_clock_sample_host_end"] = time.monotonic()
             for future, bundle in futures.items():
                 try:
                     future.result()
                 except Exception as exc:
                     promote_errors[bundle] = str(exc)
+        if profile_window is not None:
+            # The join is strictly after promote calls have completed. An
+            # unfinished read-only worker does not invalidate the case; only a
+            # schedule publication whose measured interval crossed T is a gap.
+            profile_window["thread"].join(timeout=0)
+            state = profile_window["writer_state"]
+            with profile_window["writer_lock"]:
+                profile_summary = reclaim_diagnostics["peak_transition_profile"]
+                snapshots = list(state.get("snapshot_intervals", []))
+                publications = list(state.get("schedule_publish_intervals", []))
+                profile_summary.update({
+                    "writer_alive_after_promote_completion": profile_window["thread"].is_alive(),
+                    "writer_stop_requested_host_monotonic_ns": state.get("stop_requested_host_monotonic_ns"),
+                    "snapshot_intervals": snapshots,
+                    "schedule_publish_intervals": publications,
+                    "publish_after_stop_rejected": int(state.get("publish_after_stop_rejected", 0)),
+                    "registered": bool(state.get("registered")),
+                    "rows_written": int(state.get("rows_written", 0)),
+                    "refresh_rounds": int(state.get("rounds", 0)),
+                    "candidate_bundles": list(state.get("candidate_bundles", [])),
+                    "promote_call_timings": dict(promote_call_timings),
+                    "errors": list(state.get("errors", []))})
+            cutoff_status = _scene4_profile_cutoff_status(
+                bool(state.get("snapshot_inflight_at_stop")),
+                profile_window["thread"].is_alive(), publications)
+            profile_summary["writer_cutoff_status"] = cutoff_status
+            crossed = cutoff_status["late_publications"]
+            if crossed:
+                profile_summary["late_schedule_publication"] = True
+                session.result.setdefault("case_evidence_gaps", []).append({
+                    "case_id": case_id,
+                    "reason": "schedule_publication_started_before_but_completed_after_fixed_deadline",
+                    "publications": crossed})
+                session.result["measurement_evidence_complete"] = False
         if promote_errors:
             session.result.setdefault("promote_errors", []).append({"case_id": case_id, "errors": promote_errors})
         time.sleep(1)
@@ -4074,7 +5299,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                                                                            "error": str(exc), "source": "native_journal",
                                                                            "classification": "required attempt evidence missing"})
                 session.result["measurement_evidence_complete"] = False
-        if kind == "popup" and time.monotonic() - last_ui >= 45:
+        if not scene4_v3_profile and kind == "popup" and time.monotonic() - last_ui >= 45:
             focused = session.ui_evidence(case_id, bundles + [x["bundle"] for x in session.config["real_apps"].values()],
                                           observation_phase="peak")
             foreground_history.append({"time_ms": session.safe_now_ms(case_id, "popup_observation"),
@@ -4085,7 +5310,11 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             break
         time.sleep(0.5)
     # Final UI/journal evidence must precede cleanup.
-    if kind == "popup":
+    if scene4_v3_profile:
+        # The independent screenCap/WMS/AA worker owns popup evidence for this
+        # profile. Avoid the legacy 20+ second tree/screenshot RPC in-window.
+        session.stop_scene4_frame_capture(case_id)
+    elif kind == "popup":
         session.ui_evidence(case_id, bundles + [x["bundle"] for x in session.config["real_apps"].values()],
                              observation_phase="post_release")
     else:
@@ -4106,9 +5335,9 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                                        True, row.get("screenshot_complete_wall_ms"),
                                        popup_baseline.get("case_begin_wall_ms") if popup_baseline else None,
                                        popup_baseline.get("case_end_ms") if popup_baseline else None)))]
-    popup_observation_complete = bool(in_window_ui_observations and
-                                      (kind != "popup" or len(completed) == len(bundles)))
-    if not popup_observation_complete:
+    popup_observation_complete = (None if scene4_v3_profile else bool(in_window_ui_observations and
+                                      (kind != "popup" or len(completed) == len(bundles))))
+    if not scene4_v3_profile and not popup_observation_complete:
         session.result.setdefault("case_evidence_gaps", []).append({
             "case_id": case_id, "reason": "popup_observation_incomplete_or_attempts_not_terminal",
             "completed_attempts": len(completed), "total_attempts": len(bundles),
@@ -4137,6 +5366,32 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
         session.result.setdefault("evidence_collection_errors", []).append({
             "source": "end_clock_pair", "case_id": case_id, "error": str(exc)})
         session.result["measurement_evidence_complete"] = False
+    if scene4_v3_profile and fast_frame_capture_state is not None and measurement_end_uptime is not None:
+        # END is already stamped before any worker join/remote screenshot cleanup.
+        fast_frame_proof = session.finish_scene4_frame_capture(
+            case_id, measurement_end_uptime, collection_end_boottime_s=measurement_end_uptime)
+        reclaim_diagnostics["fast_frame_capture"] = fast_frame_proof
+        popup_observation_complete = bool(fast_frame_proof.get("complete"))
+        if not popup_observation_complete:
+            observed_gaps = fast_frame_proof.get("capture_gap_seconds", [])
+            session.result.setdefault("case_evidence_gaps", []).append({
+                "case_id": case_id, "reason": "fast_frame_visual_review_or_coverage_incomplete",
+                "errors": fast_frame_proof.get("errors", []),
+                "maximum_frame_gap_seconds": fast_frame_proof.get("maximum_observed_gap_seconds",
+                                                                   max(observed_gaps, default=None)),
+                "manifest_path": fast_frame_proof.get("manifest_path"),
+                "review_path": fast_frame_proof.get("review_path")})
+            session.result["measurement_evidence_complete"] = False
+            # A frame awaiting visual/identity review is unknown, not a
+            # negative popup observation. Preserve numeric startup/OOM counts,
+            # but do not publish native-popup or total counts as zero.
+            session.result["scene4_fast_frame_counts_unknown"] = True
+    elif scene4_v3_profile:
+        popup_observation_complete = False
+        session.result.setdefault("case_evidence_gaps", []).append({
+            "case_id": case_id, "reason": "fast_frame_capture_or_end_clock_unknown"})
+        session.result["measurement_evidence_complete"] = False
+        session.result["scene4_fast_frame_counts_unknown"] = True
     if session.trace_started and session.trace_segment_name == f"trace_{case_id}.ftrace":
         session.finish_trace()
     if daily_barrier_complete:
@@ -4160,10 +5415,35 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                                                                        "reason": "daily barrier failed; no peak command sent"})
     for bundle in bundles:
         try:
-            warm_rows = session.journal(bundle, case_id + "_daily")
-            daily_records[bundle] = warm_rows
-            rows = session.journal(bundle, case_id)
-            records[bundle] = rows
+            if scene4_v3_profile:
+                daily_proof = _scene4_journal_readback(session, bundle, case_id + "_daily")
+                peak_proof = _scene4_journal_readback(session, bundle, case_id, allow_absent=True)
+                daily_records[bundle] = daily_proof["rows"]
+                records[bundle] = peak_proof["rows"]
+                for journal_name, proof in (("daily", daily_proof), ("peak", peak_proof)):
+                    proof_path = session.output / "journals" / f"{case_id}_{bundle}_{journal_name}_completeness.json"
+                    proof_path.parent.mkdir(parents=True, exist_ok=True)
+                    save(proof_path, {key: value for key, value in proof.items()
+                                      if key not in ("raw", "rows")})
+                    raw_path = session.output / "journals" / f"{case_id}_{bundle}_{journal_name}_readback.jsonl"
+                    raw_path.write_text(proof.get("raw", ""), encoding="utf-8")
+                if not daily_proof["complete"] or not peak_proof["complete"]:
+                    session.result.setdefault("case_evidence_gaps", []).append({
+                        "case_id": case_id, "bundle": bundle,
+                        "reason": "peak_transition_journal_readback_incomplete",
+                        "daily": {key: value for key, value in daily_proof.items() if key not in ("raw", "rows")},
+                        "peak": {key: value for key, value in peak_proof.items() if key not in ("raw", "rows")}})
+                    session.result["measurement_evidence_complete"] = False
+                else:
+                    profile_daily_journal_complete.add(bundle)
+                    profile_peak_journal_complete.add(bundle)
+                warm_rows = daily_records[bundle]
+                rows = records[bundle]
+            else:
+                warm_rows = session.journal(bundle, case_id + "_daily")
+                daily_records[bundle] = warm_rows
+                rows = session.journal(bundle, case_id)
+                records[bundle] = rows
         except Exception as exc:
             session.result.setdefault("evidence_collection_errors", []).append({
                 "source": "native_journal", "case_id": case_id, "bundle": bundle,
@@ -4181,7 +5461,13 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             session.collect_kernel_dmesg_case(case_id, observed_pids, bundles, records,
                                               start_uptime, end_uptime,
                                               wall_uptime_anchor["wall_ms"],
-                                              wall_uptime_anchor["uptime_seconds"])
+                                              wall_uptime_anchor["uptime_seconds"],
+                                              scene4_peak_transition=scene4_v3_profile,
+                                              daily_attempt_rows=daily_records if scene4_v3_profile else None,
+                                              daily_journal_readback_complete_bundles=profile_daily_journal_complete,
+                                              journal_readback_complete_bundles=profile_peak_journal_complete,
+                                              journal_case_ids={bundle: case_id + "_daily" for bundle in bundles}
+                                                if scene4_v3_profile else None)
         except Exception as exc:
             session.result.setdefault("evidence_collection_errors", []).append({
                 "source": "kernel_dmesg", "case_id": case_id, "error": str(exc)})
@@ -4191,7 +5477,8 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
     for bundle in bundles:
         session.book.finalize_startup_attempt(
             case_id, bundle, records.get(bundle, []), observed_pids, end_ms,
-            f"journals/{case_id}_{bundle}.jsonl", allow_timeout=daily_barrier_complete)
+            f"journals/{case_id}_{bundle}.jsonl", allow_timeout=daily_barrier_complete,
+            peak_transition_profile=scene4_v3_profile)
     measured = []
     for bundle in bundles:
         rows = records[bundle]
@@ -4203,7 +5490,12 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                            event.get("bundle") == bundle and event.get("category") in
                            ("oom_kill", "memory_policy_kill", "startup_failure")]
         memory_failure = bool(terminal_events)
-        outcome = attempt_outcome(bool(peak_begin), bool(reached), bool(ready), memory_failure)
+        if scene4_v3_profile and reached and memory_failure:
+            outcome = "confirmed_oom_after_peak"
+        elif scene4_v3_profile and reached and not ready:
+            outcome = "peak_reached_hold_unconfirmed"
+        else:
+            outcome = attempt_outcome(bool(peak_begin), bool(reached), bool(ready), memory_failure)
         if not daily_barrier_complete and not peak_begin and not memory_failure:
             outcome = "aborted_before_peak"
         terminal_complete = outcome in ("success", "confirmed_memory_failure")
@@ -4217,6 +5509,10 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                          "peak_observed": bool(reached), "ready_observed": bool(ready),
                          "daily_stage_observed": bool(daily_ready),
                          "peak_begin_observed": bool(peak_begin),
+                         "daily_ready_boottime_s": _scene4_event_time(daily_ready[-1]) if daily_ready else None,
+                         "peak_begin_boottime_s": _scene4_event_time(peak_begin[0]) if peak_begin else None,
+                         "peak_reached_boottime_s": _scene4_event_time(reached[-1]) if reached else None,
+                         "startup_ready_boottime_s": _scene4_event_time(ready[-1]) if ready else None,
                          "peak_bytes": max(observed_peak[bundle], reached[-1]["peak_bytes"] if reached else 0),
                          "journal_touched_peak_bytes": max((row.get("anon_bytes", 0) + row.get("file_bytes", 0) for row in rows), default=0),
                          "measured_peak_private_bytes": observed_peak_private[bundle],
@@ -4228,7 +5524,12 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
     case_kernel_coverage_complete = any(
         row.get("case_id") == case_id and row.get("coverage_complete")
         for row in session.result.get("kernel_dmesg_observations", []))
-    case_evidence_complete = case_attempts_complete and case_kernel_coverage_complete
+    dirty_gate_complete = not (scene4_v3_profile and bool(cfg.get("oracle_file_dirty_variant", False))) or \
+        bool(dirty_prepare_complete)
+    profile_gate_complete = not scene4_v3_profile or bool(
+        reclaim_diagnostics.get("peak_transition_profile", {}).get("registered"))
+    case_evidence_complete = case_attempts_complete and case_kernel_coverage_complete and \
+        dirty_gate_complete and profile_gate_complete
     session.result["measurement_evidence_complete"] = (
         session.result.get("measurement_evidence_complete", True) and case_evidence_complete)
     intervals = []
@@ -4310,6 +5611,8 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             "kernel_coverage_complete": case_kernel_coverage_complete,
             "case_measurement_complete": case_evidence_complete,
             "peak_start_ms": promote_started_ms, "foreground_restore_ms": foreground_restore_ms,
+            "peak_start_ms_semantics": ("deadline_derived_expected_from_begin_clock_anchor"
+                if scene4_v3_profile and promote_started_ms is not None else "legacy_recorded_value"),
             "pre_promote_identity_checks": pre_promote_identity_checks,
             "preparation_failure": next((row for row in session.result.get("framework_preparation_failures", [])
                                            if row.get("case_id") == case_id), None),
@@ -4321,7 +5624,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                                      "end_uptime_seconds": measurement_end_uptime,
                                      "end_wall_ms": measurement_end_ms},
             "trace_segment": session.trace_segments.get(f"trace_{case_id}.ftrace", {}),
-            "ui_capture_interval": {
+        "ui_capture_interval": {
                 "first_wall_ms": min((row["capture_wall_ms"] for row in session.ui_observations.get(case_id, [])
                                        if row.get("capture_wall_ms") is not None), default=None),
                 "last_wall_ms": max((row["capture_wall_ms"] for row in session.ui_observations.get(case_id, [])
@@ -4329,9 +5632,15 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                 "case_attribution_capture_count": sum(bool(row.get("case_attribution_allowed") and
                     row.get("capture_clock_valid")) for row in session.ui_observations.get(case_id, []))},
             "foreground_observations": foreground_history,
-            "target_trigger": {"category": target_category, "observed": bool(target_events),
-                               "evidence": target_events},
+            "target_trigger": {"category": target_category,
+                "observed": (None if scene4_v3_profile and target_category == "low_memory_popup" and
+                              fast_frame_proof is not None and not fast_frame_proof.get("complete")
+                              else bool(target_events)),
+                "evidence": target_events,
+                "frame_review_pending": bool(scene4_v3_profile and target_category == "low_memory_popup" and
+                    fast_frame_proof is not None and not fast_frame_proof.get("complete"))},
             "popup_observation_complete": popup_observation_complete,
+            "fast_frame_capture": fast_frame_proof,
             "popup_observations": session.ui_observations.get(case_id, []),
             "restore_initial_state": native_popup_restoration,
             "owned_app_cleanup": owned_cleanup,
@@ -4348,6 +5657,9 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             "launch_errors": errors}
     if session.scene == 4:
         result_case["file_mib"] = file_mib
+        if scene4_v3_profile:
+            result_case["dirty_file_prepare"] = reclaim_diagnostics.get("dirty_file_prepare")
+            result_case["dirty_file_prepare_complete"] = dirty_gate_complete
         result_case["reclaim_diagnostics"] = reclaim_diagnostics
         result_case["file_sync_proofs"] = {
             bundle: {
@@ -4583,6 +5895,134 @@ def _scene4_event_time(row: dict) -> float | None:
         return value / 1e9 if value > 0 else None
     except (TypeError, ValueError):
         return None
+
+
+def _scene4_journal_readback(session: "Session", bundle: str, journal_case_id: str,
+                             *, allow_absent: bool = False) -> dict:
+    """Read one journal twice and prove byte-stability/complete JSON lines."""
+    path = session.device.app(bundle)["files"] + f"/memscene_{journal_case_id}.jsonl"
+    raw_first, _ = session.device.journal(bundle, journal_case_id)
+    raw_second, rows_second = session.device.journal(bundle, journal_case_id)
+    absent_text = "No such file or directory"
+    absent = (raw_first == raw_second and absent_text in raw_first and path in raw_first)
+    if absent and allow_absent:
+        return {"complete": True, "state": "confirmed_absent", "path": path,
+                "raw": raw_second, "rows": [], "byte_stable": True,
+                "reason": "peak journal does not exist before promotion"}
+    parsed = []
+    malformed = []
+    for number, line in enumerate(raw_second.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict) or row.get("case_id") != journal_case_id:
+                raise ValueError("journal row case_id mismatch or non-object row")
+            parsed.append(row)
+        except (ValueError, TypeError) as exc:
+            malformed.append({"line": number, "error": str(exc), "raw": line})
+    stable = raw_first == raw_second
+    complete = bool(stable and raw_second.endswith("\n") and parsed and not malformed)
+    return {"complete": complete, "state": "present" if parsed else "unknown_or_empty",
+            "path": path, "raw": raw_second, "rows": parsed,
+            "byte_stable": stable, "ends_with_newline": raw_second.endswith("\n"),
+            "malformed_lines": malformed,
+            "reason": None if complete else "journal_not_byte_stable_complete_jsonl"}
+
+
+def _scene4_dirty_prepare(session: "Session", case_id: str, bundles: list[str],
+                          timeout_seconds: float) -> dict:
+    """Issue one redirty+minimize Want per owned app and await its journal proof."""
+    started = time.monotonic()
+    timeout_seconds = max(1.0, min(90.0, float(timeout_seconds)))
+    launched = {}
+    errors = {}
+    def issue(bundle: str) -> tuple[str, str | None]:
+        try:
+            output = session.device.launch(bundle, params={"op": "redirty_minimize", "case_id": case_id})
+            return output, None
+        except Exception as exc:
+            return "", str(exc)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(bundles))) as pool:
+        futures = {pool.submit(issue, bundle): bundle for bundle in bundles}
+        for future, bundle in futures.items():
+            output, error = future.result()
+            launched[bundle] = output
+            if error:
+                errors[bundle] = error
+    completed = {}
+    deadline = time.monotonic() + timeout_seconds
+    latest_rows: dict[str, list[dict]] = {bundle: [] for bundle in bundles}
+    while time.monotonic() < deadline and len(completed) + len(errors) < len(bundles):
+        for bundle in bundles:
+            if bundle in completed or bundle in errors:
+                continue
+            try:
+                rows = session.journal(bundle, case_id + "_daily")
+                latest_rows[bundle] = rows
+                redirty = [row for row in rows if row.get("event") == "file_redirty_complete" and
+                           row.get("case_id") in (case_id, case_id + "_daily")]
+                failures = [row for row in rows if row.get("event") == "file_redirty_failed" and
+                            row.get("case_id") in (case_id, case_id + "_daily")]
+                minimized = [row for row in rows if row.get("event") == "file_minimize_succeeded" and
+                             row.get("case_id") in (case_id, case_id + "_daily")]
+                minimize_failed = [row for row in rows if row.get("event") == "file_minimize_failed" and
+                                   row.get("case_id") in (case_id, case_id + "_daily")]
+                if failures or minimize_failed:
+                    errors[bundle] = {"redirty_failures": failures, "minimize_failures": minimize_failed}
+                elif redirty and minimized:
+                    record = redirty[-1]
+                    try:
+                        bytes_written = int(record.get("file_redirty_bytes", -1))
+                        pages_written = int(record.get("file_redirty_pages", -1))
+                        start_ns = int(record.get("file_redirty_start_boottime_ns", -1))
+                        end_ns = int(record.get("file_redirty_end_boottime_ns", -1))
+                        device_id = int(record.get("file_dev", record.get("file_device", -1)))
+                        inode = int(record.get("file_ino", record.get("file_inode", -1)))
+                        size = int(record.get("file_size", -1))
+                    except (TypeError, ValueError, OverflowError):
+                        errors[bundle] = "redirty_completion_fields_invalid"
+                        continue
+                    if (bytes_written <= 0 or pages_written <= 0 or start_ns <= 0 or
+                            end_ns < start_ns or device_id <= 0 or inode <= 0 or size <= 0 or
+                            bytes_written != size or
+                            pages_written != math.ceil(size / 4096) or
+                            str(record.get("file_backing_path", "")).replace("\\", "/").rsplit("/", 1)[-1] !=
+                                f"memscene_{case_id}.pages"):
+                        errors[bundle] = "redirty_completion_does_not_cover_exact_backing_file"
+                        continue
+                    minimize_row = minimized[-1]
+                    try:
+                        same_generation = (int(minimize_row.get("pid", -1)) == int(record.get("pid", -2)) and
+                            int(minimize_row.get("uid", -1)) == int(record.get("uid", -2)) and
+                            str(minimize_row.get("start_ticks", "")) == str(record.get("start_ticks", "")))
+                    except (TypeError, ValueError, OverflowError):
+                        same_generation = False
+                    if not same_generation:
+                        errors[bundle] = "minimize_event_process_generation_mismatch"
+                        continue
+                    completed[bundle] = {"pid": record.get("pid"), "uid": record.get("uid"),
+                        "start_ticks": record.get("start_ticks"), "file_sync_mode": record.get("file_sync_mode"),
+                        "file_synced_bytes": record.get("file_synced_bytes"),
+                        "file_backing_path": record.get("file_backing_path"),
+                        "file_dev": device_id, "file_ino": inode, "file_size": size,
+                        "redirty_bytes": bytes_written, "redirty_pages": pages_written,
+                        "redirty_start_boottime_s": start_ns / 1e9,
+                        "redirty_end_boottime_s": end_ns / 1e9,
+                        "minimize_event": minimize_row}
+            except Exception as exc:
+                errors[bundle] = {"journal_read_error": str(exc)}
+        if len(completed) + len(errors) < len(bundles):
+            time.sleep(0.2)
+    for bundle in bundles:
+        if bundle not in completed and bundle not in errors:
+            errors[bundle] = "redirty_or_minimize_event_timeout"
+    return {"complete": len(completed) == len(bundles) and not errors,
+        "started_host_monotonic": started, "completed_host_monotonic": time.monotonic(),
+        "elapsed_seconds": time.monotonic() - started, "timeout_seconds": timeout_seconds,
+        "bundles": completed, "errors": errors,
+        "launch_output": launched,
+        "journal_rows": latest_rows}
 
 
 def _scene4_cold_ready(row: dict, expected_bytes: int, donor: bool = False,
@@ -5175,6 +6615,36 @@ def _scene4_aa_process_inventory(raw: str) -> dict:
             "uid": int(uid.group(1)), "state": state.group(1).upper()})
     return {"rows": rows, "malformed_record_count": len(malformed),
         "malformed_records": malformed, "raw": raw or ""}
+
+
+def _scene4_observer_mission_inventory_complete(raw: str) -> bool:
+    """Require the platform's explicit mission-list frame, including empty lists."""
+    value = raw or ""
+    framed = bool(re.search(r"(?m)^\s*User ID #\d+\s*$", value) and
+        re.search(r"current mission lists:\s*\{", value) and
+        re.search(r"(?m)^\s*}\s*$", value))
+    if not framed:
+        return False
+    target_blocks = [block for block in re.split(r"(?=^\s*Mission ID #)", value, flags=re.M)
+        if "LowMemoryAbility" in block and "com.huawei.hmos.taskmanager" in block]
+    parsed = parse_low_memory_missions(value, include_process_identity=True)
+    # Mission records on this device's TaskManager output do not carry a PID.
+    # The observer binds process identity independently from the complete AA,
+    # WMS, and proc snapshots; requiring a mission PID incorrectly made every
+    # otherwise complete mission inventory unknown.
+    return len(target_blocks) == len(parsed)
+
+
+def _scene4_observer_aa_inventory_complete(raw: str) -> bool:
+    """Require the AA inventory header and a contiguous, fully parsed record list."""
+    value = raw or ""
+    inventory = _scene4_aa_process_inventory(value)
+    ids = [int(match.group(1)) for match in re.finditer(
+        r"(?im)^\s*AppRunningRecord ID #(\d+)\s*$", value)]
+    return (bool(re.search(r"(?im)^\s*AppRunningRecords\s*:\s*$", value)) and
+        bool(ids) and ids == list(range(len(ids))) and
+        inventory.get("malformed_record_count") == 0 and
+        len(inventory.get("rows", [])) == len(ids))
 
 
 def _scene4_dump_layout_for_bundle(session: Session, bundle: str, name: str) -> tuple[dict, str, str, dict]:
@@ -8666,6 +10136,31 @@ def scene4(session: Session) -> Path:
             ledger_rows = [row for row in ledger_rows if row.get("event_id") == event_id]
             timing_v3_copy = session.output / f"oracle_action_timing_v3_{case_id}.csv"
             timing_v3_copy.write_text(timing_v3_text, encoding="utf-8")
+            swap_telemetry_remote = ledger_remote + ".swap_telemetry_v1.csv"
+            swap_telemetry_text = d.shell(
+                "if [ -r " + quote(swap_telemetry_remote) + " ]; then cat " +
+                quote(swap_telemetry_remote) + "; else printf ''; fi",
+                timeout=10, check=False)
+            swap_telemetry_copy = session.output / f"oracle_action_swap_telemetry_v1_{case_id}.csv"
+            swap_telemetry_copy.write_text(swap_telemetry_text, encoding="utf-8")
+            swap_telemetry_header = (
+                "action_id,event_id,case_id,bundle,pid,uid,start_ticks,write_attempted,write_return,"
+                "write_errno,syscall_start_boottime_s,syscall_return_boottime_s,stage,read_start_boottime_s,"
+                "read_end_boottime_s,read_duration_ms,group_scope,group_path,node,read_status,read_errno,raw")
+            swap_telemetry_lines = swap_telemetry_text.splitlines()
+            swap_telemetry_header_valid = bool(swap_telemetry_lines and
+                swap_telemetry_lines[0].strip() == swap_telemetry_header)
+            swap_telemetry_proof = {
+                "remote_path": swap_telemetry_remote,
+                "local_path": str(swap_telemetry_copy.name),
+                "exists": bool(swap_telemetry_text.strip()),
+                "header_valid": swap_telemetry_header_valid,
+                "sha256": hashlib.sha256(swap_telemetry_text.encode("utf-8")).hexdigest(),
+                "bytes": len(swap_telemetry_text.encode("utf-8")),
+                "rows": max(0, len(swap_telemetry_lines) - (1 if swap_telemetry_header_valid else 0)),
+                "required_for_force_shrink_all": False,
+                "note": "service swap telemetry sidecar is retained when present; no action means an absent/empty sidecar is expected"
+            }
             timing_v3_all_rows = list(csv.DictReader(timing_v3_text.splitlines())) if timing_v3_text.strip() else []
             timing_v3_rows = [row for row in timing_v3_all_rows if row.get("event_id") == event_id]
             timing_v3_proof = _scene4_timing_v3_completeness(ledger_rows, timing_v3_rows, event_id)
@@ -8678,6 +10173,7 @@ def scene4(session: Session) -> Path:
                 local_path=str(timing_v3_copy.name), sha256=hashlib.sha256(
                     timing_v3_text.encode("utf-8")).hexdigest(),
                 bytes=len(timing_v3_text.encode("utf-8")), header_valid=timing_v3_header_valid)
+            result.setdefault("oracle_sidecars", {})["swap_telemetry_v1"] = swap_telemetry_proof
             ledger_proof = _scene4_ledger_completeness(ledger_rows, session.phase,
                                                         control_begin, control_end)
             ledger_evidence_complete = ledger_proof["complete"]

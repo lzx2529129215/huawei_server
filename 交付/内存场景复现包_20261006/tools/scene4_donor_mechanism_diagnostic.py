@@ -114,6 +114,21 @@ def runner_result_metadata(*, runner_mode: bool, runner_config: dict | None = No
                 "target_launch_count": 0, "file_mib": 0,
                 "planned_needed_bytes": SYNTHETIC_NEEDED,
                 "planned_needed_semantics": "synthetic future demand; no target app is started"}
+    if scene4.get("execution_profile") == "legacy_peak_transition":
+        apps = (runner_config or {}).get("test_apps", [])
+        peak = scene4.get("peak_mib", scene4.get("single_app_peak_mib"))
+        return {"scope": "scene4_legacy_peak_transition_real_runner_execution",
+                "diagnostic_only": True, "synthetic_future_demand": False,
+                "workload_profile": "legacy_peak_transition",
+                "configured_test_app_count": len(apps) if isinstance(apps, list) else None,
+                "target_launch_count": None,
+                "file_mib": scene4.get("file_mib"),
+                "daily_mib": scene4.get("daily_mib"),
+                "peak_mib": peak,
+                "daily_cold_seconds": scene4.get("daily_cold_seconds"),
+                "case_repetitions": scene4.get("case_repetitions"),
+                "planned_needed_bytes": None,
+                "planned_needed_semantics": "not_applicable; actual legacy peak-transition demand is recorded by the bound runner cases and journals"}
     return {"scope": "scene4_bound_real_runner_execution",
             "diagnostic_only": False, "synthetic_future_demand": False,
             "target_launch_count": None,
@@ -652,6 +667,7 @@ def main() -> int:
     oracle_global_cap_mib = ini_uint("oracle_global_cap_mb", 4096)
     oracle_case_cap_mib = ini_uint("oracle_case_cap_mb", 4096)
     oracle_app_cap_mib = ini_uint("oracle_app_cap_mb", 2048)
+    oracle_cumulative_keep_mib = ini_uint("oracle_cumulative_keep_mb", 512)
     runner_config_preflight = None
     if args.mode == "runner":
         if not args.runner_config:
@@ -687,6 +703,7 @@ def main() -> int:
                 "oracle_feedback_delay_ms": oracle_feedback_delay_ms,
                 "oracle_global_cap_mb": oracle_global_cap_mib, "oracle_case_cap_mb": oracle_case_cap_mib,
                 "oracle_app_cap_mb": oracle_app_cap_mib, "rolling_global_mb_per_minute": 512,
+                "oracle_cumulative_keep_mb": oracle_cumulative_keep_mib,
                 "rolling_app_mb_per_minute": 512, "donor_min_keep_mb": 512,
                 "swap_reserve_mb": 1024},
             "restore": {"exe": ORIGINAL["exe"], "config": ORIGINAL["config"],
@@ -710,20 +727,24 @@ def main() -> int:
     initial_paused = args.mode == "paused-a" or (args.mode == "runner" and args.phase == "baseline")
     control_contents = control_content_for_mode(args.mode, args.phase)
     runner_metadata = runner_result_metadata(runner_mode=args.mode == "runner", runner_config=config)
+    legacy_peak_transition = config.get("scene4", {}).get("execution_profile") == "legacy_peak_transition"
     result: dict = {**runner_metadata, "mode": args.mode,
         "event_id": event_id if args.mode != "runner" else None,
         "driver_run_id": run_id, "case_id": run_id,
-        "launch_lead_seconds": 30, "donors": {}, "actions": [], "raw_remote": {},
-        "settings": {"donor_peak_mib": 3072,
-            "file_mib": runner_metadata["file_mib"], "initial_read_once": True,
+        "launch_lead_seconds": None if legacy_peak_transition else 30,
+        "donors": {}, "actions": [], "raw_remote": {},
+        "settings": {"donor_peak_mib": None if legacy_peak_transition else 3072,
+            "file_mib": runner_metadata["file_mib"], "initial_read_once": None if legacy_peak_transition else True,
             "target_peak_mib": scene_cfg.get("target_peak_mib", scene_cfg.get("peak_mib")) if args.mode == "runner" else None,
             "target_daily_mib": scene_cfg.get("target_daily_mib", scene_cfg.get("daily_mib")) if args.mode == "runner" else None,
-            "background_minimize": "verified focus->EnhanceMinimizeBtn->AA BACKGROUND+WMS invisible",
+            "background_minimize": "not_applicable_to_legacy_eight_app_peak_transition" if legacy_peak_transition else "verified focus->EnhanceMinimizeBtn->AA BACKGROUND+WMS invisible",
             "max_ratio_per_action": oracle_max_ratio, "oracle_batch_mb": oracle_batch_mib,
             "oracle_feedback_delay_ms": oracle_feedback_delay_ms, "batch_mb": 512, "keep_mb": 512,
+            "oracle_cumulative_keep_mb": oracle_cumulative_keep_mib,
             "oracle_global_cap_mb": oracle_global_cap_mib, "oracle_case_cap_mb": oracle_case_cap_mib,
             "oracle_app_cap_mb": oracle_app_cap_mib, "rolling_global_mb_per_minute": 512,
             "rolling_app_mb_per_minute": 512, "swap_reserve_mb": 1024},
+        "oracle_reclaim_applied": bool(args.mode == "runner" and args.phase == "optimized"),
         "actual_target_timeline": None, "formal_event_counts": None}
     attach_runner_config_preflight(result, runner_config_preflight)
     atomic_json(out / "diagnostic_initial_state.json", result)
@@ -748,6 +769,15 @@ def main() -> int:
             "5d73000551a50b101a442b91a669457a96b6f8106ba141762b6e89d2c8736b5a",
             "a65f113e4d85159fb3c3dc18ec5f07e1ee3369f2d69615d61f8bb9ca62669060",
             "ea56ca0f620726ad17efdb3759e529932e52b73d15774cec9ef5c7de288b9a76",
+            "93d7c2071d769efcb57def72c70d77fc4fd5facafae16f3e526577dac3119499",
+            "ea9a72a69cb84b80b66dfbf284357d56b86d1894d91f91e20d80c61431b67741",
+            "ac66b53e8ec4be889f7005e9f52fd89e7884fda8057802cf9d76377c3b023ee7",
+            "fc0c0389591f3a0a95db16b18c200b82d1b3403e1dddb42337ea4706daf0220f",
+            "ea9778521142e651434e27812d7fd55bbe8f391d3dd31fc5caf2271d75f6a9f3",
+            "eee6217e985c10f22087b7561eff882106fb3244c4b6d5fd617cc6d7a33537fe",
+            "ce1f1898c473e161f99356898c4f9ecff33ccabd9580e396d25bd70c1f954e23",
+            "e04b8a2ae0bcce2a22c9decf75198b1c8c679a876810a6be204473a9ebbd60c6",
+            "93a8b99365551273f550131b2c03c69ca7c360a40d56c05c963e154dd0b08740",
         }:
             raise RuntimeError("daemon binary hash is not a reviewed timing-V3 artifact")
         template = Path(args.config_template)
@@ -1003,7 +1033,8 @@ def main() -> int:
         if not invalidated.get("verified"): raise RuntimeError("diagnostic schedule invalidation unverified")
         result["ledger"] = {"v2": copy_remote(device, ledger_remote, out / "oracle_action_ledger.csv"),
             "timing_v3": copy_remote(device, ledger_remote + ".timing_v3.csv", out / "oracle_action_timing_v3.csv"),
-            "cumulative_watermark_v1": copy_remote(device, ledger_remote + ".watermark_v1.csv", out / "oracle_action_watermark_v1.csv") if oracle_ratio_semantics=="cumulative_anon_watermark" else None}
+            "cumulative_watermark_v1": copy_remote(device, ledger_remote + ".watermark_v1.csv", out / "oracle_action_watermark_v1.csv") if oracle_ratio_semantics=="cumulative_anon_watermark" else None,
+            "swap_telemetry_v1": copy_remote(device, ledger_remote + ".swap_telemetry_v1.csv", out / "oracle_action_swap_telemetry_v1.csv")}
         for name in ("system.csv", "apps.csv", "events.csv"):
             result["raw_remote"][name] = copy_remote(device, remote_root + "/daemon_logs/harmony-v1-oracle-scene4/" + name,
                 out / f"daemon_{name}")
@@ -1143,3 +1174,8 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except KeyboardInterrupt:
         raise
+
+
+
+
+

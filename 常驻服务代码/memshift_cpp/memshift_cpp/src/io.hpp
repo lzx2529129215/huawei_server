@@ -153,7 +153,8 @@ inline System systemSample(const std::string& proc) {
         info[key] = unit == "kB" ? (n > Unlimited/1024 ? Unlimited : n*1024) : n;
     }
     s.total = required(info,"MemTotal"); s.available = required(info,"MemAvailable");
-    s.free = required(info,"MemFree"); s.swapTotal = required(info,"SwapTotal");
+    s.free = required(info,"MemFree"); s.cached=get(info,"Cached"); s.dirty=get(info,"Dirty");
+    s.swapTotal = required(info,"SwapTotal");
     s.swapFree = required(info,"SwapFree"); s.zswap = get(info,"Zswap"); s.zswapped = get(info,"Zswapped");
     if (!s.total || s.available > s.total || s.free > s.total) throw std::runtime_error("inconsistent meminfo");
     try { s.mem = parsePSI(readPath(proc+"/pressure/memory")); } catch (const std::exception&) {}
@@ -182,16 +183,30 @@ inline Configuration parseConfig(const std::string& text) {
         else if(k=="lock_file") o.lock=v;
         else if(k=="control_file") o.control=v;
         else if(k=="oracle_mode") o.oracleMode=boolValue(v);
+        else if(k=="oracle_profile") {
+            if(v!="legacy_two_donor" && v!="peak_transition_os_snapshot")
+                throw std::runtime_error("oracle_profile: unsupported value");
+            o.oracleProfile=v;
+        }
+        else if(k=="oracle_backend") {
+            if(v!="force_shrink_all" && v!="proc_file" && v!="proc_file_writeback")
+                throw std::runtime_error("oracle_backend: unsupported value");
+            o.oracleBackend=v;
+            o.oracleBackendExplicit=true;
+        }
         else if(k=="oracle_schedule_file") o.oracleSchedule=v;
         else if(k=="oracle_ledger_file") o.oracleLedger=v;
         else if(k=="oracle_batch_mb") o.oracleBatch=mbValue(v);
         else if(k=="oracle_max_ratio") { auto n=uintValue(v); if(n<1 || n>90) throw std::runtime_error("oracle_max_ratio: 1..90"); o.oracleMaxRatio=static_cast<unsigned>(n); }
+        else if(k=="oracle_cumulative_keep_mb") { auto n=uintValue(v); if(n<128 || n>512) throw std::runtime_error("oracle_cumulative_keep_mb: 128..512"); o.oracleCumulativeKeep=mbValue(v); }
         else if(k=="oracle_ratio_semantics") {
             if(v!="resident_incremental" && v!="cumulative_anon_watermark")
                 throw std::runtime_error("oracle_ratio_semantics: unsupported value");
             o.oracleRatioSemantics=v;
         }
         else if(k=="oracle_feedback_delay_ms") { auto n=uintValue(v); if(n>10000) throw std::runtime_error("oracle_feedback_delay_ms: 0..10000"); o.oracleFeedbackDelayMs=static_cast<unsigned>(n); }
+        else if(k=="oracle_profile_action_interval_ms") { auto n=uintValue(v); if(n<1000 || n>5000) throw std::runtime_error("oracle_profile_action_interval_ms: 1000..5000"); o.oracleProfileActionIntervalMs=static_cast<unsigned>(n); }
+        else if(k=="oracle_profile_poll_interval_ms") { auto n=uintValue(v); if(n<100 || n>1000) throw std::runtime_error("oracle_profile_poll_interval_ms: 100..1000"); o.oracleProfilePollIntervalMs=static_cast<unsigned>(n); }
         else if(k=="oracle_global_cap_mb") o.oracleGlobalCap=mbValue(v);
         else if(k=="oracle_case_cap_mb") o.oracleCaseCap=mbValue(v);
         else if(k=="oracle_app_cap_mb") o.oracleAppCap=mbValue(v);

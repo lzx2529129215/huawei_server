@@ -33,6 +33,7 @@ CMakeCache.txt
 results/
 validation/
 evidence/
+host_attempts/
 logs/
 logs-*/
 logs_*/

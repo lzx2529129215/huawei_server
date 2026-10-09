@@ -119,13 +119,20 @@ struct Options {
     std::string root = "/sys/fs/cgroup", proc = "/proc";
     std::string logs = "./logs", lock = "./memshiftd.lock", control = "";
     bool oracleMode = false;
+    std::string oracleProfile = "legacy_two_donor";
+    std::string oracleBackend = "force_shrink_all";
+    bool oracleBackendExplicit = false;
     std::string oracleSchedule = "", oracleLedger = "";
     Bytes oracleBatch = 512*MiB, oracleGlobalCap = 4096*MiB, oracleCaseCap = 4096*MiB, oracleAppCap = 2048*MiB;
+    // Cumulative-watermark mode only; legacy oracle keeps its 512 MiB floor.
+    Bytes oracleCumulativeKeep = 512*MiB;
     unsigned oracleMaxRatio = 30;
     // Experimental oracle-only interpretation. The default preserves the
     // established resident-relative request behavior.
     std::string oracleRatioSemantics = "resident_incremental";
     unsigned oracleFeedbackDelayMs = 0;
+    unsigned oracleProfileActionIntervalMs = 1000;
+    unsigned oracleProfilePollIntervalMs = 200;
     int intervalMs = 1000, swappiness = -1;
     bool allowAnon = true, requirePSI = true;
     double horizonSec = 5, warmupSec = 30, cooldownSec = 3, backoffSec = 30;
@@ -145,7 +152,7 @@ struct App {
 };
 struct System {
     double time = 0;
-    Bytes total = 0, available = 0, free = 0, swapTotal = 0, swapFree = 0;
+    Bytes total = 0, available = 0, free = 0, cached = 0, dirty = 0, swapTotal = 0, swapFree = 0;
     Bytes zswap = 0, zswapped = 0, pswpin = 0, pswpout = 0;
     PSI mem, io;
 };

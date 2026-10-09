@@ -171,6 +171,52 @@ std::vector<std::uint64_t> processIds(int dir) {
     return ids;
 }
 
+struct CgroupMemberObservation {
+    bool readOk=false;
+    bool parseValid=false;
+    std::size_t entryCount=0;
+    std::size_t invalidCount=0;
+    std::vector<std::uint64_t> uniquePids;
+    std::string raw;
+};
+
+CgroupMemberObservation observeCgroupMembers(int dir) {
+    CgroupMemberObservation observation;
+    try { observation.raw=readAt(dir,"cgroup.procs"); }
+    catch(const std::exception&) { return observation; }
+    observation.readOk=true;
+    observation.parseValid=true;
+    std::set<std::uint64_t> unique;
+    std::istringstream lines(observation.raw);
+    std::string line;
+    while(std::getline(lines,line)) {
+        line=trim(line);
+        if(line.empty()) continue;
+        try {
+            const auto pid=uintValue(line);
+            if(pid==0) { observation.parseValid=false; ++observation.invalidCount; }
+            else { ++observation.entryCount; unique.insert(pid); }
+        } catch(const std::exception&) { observation.parseValid=false; ++observation.invalidCount; }
+    }
+    observation.uniquePids.assign(unique.begin(),unique.end());
+    return observation;
+}
+
+std::string safeMemberRaw(const std::string& raw) {
+    std::string out;
+    out.reserve(std::min<std::size_t>(raw.size(),256));
+    for(unsigned char c:raw) {
+        if(out.size()>=256) { out+="..."; break; }
+        if(c=='\\' || c=='"') { out.push_back('\\'); out.push_back(static_cast<char>(c)); }
+        else if(c=='\n') out+="\\n";
+        else if(c=='\r') out+="\\r";
+        else if(c=='\t') out+="\\t";
+        else if(c>=32 && c<127) out.push_back(static_cast<char>(c));
+        else out.push_back('?');
+    }
+    return out;
+}
+
 ProcessAggregate sampleProcesses(const std::vector<std::uint64_t>& ids,
     const std::map<std::uint64_t,ProcStat>& previous,std::map<std::uint64_t,ProcStat>& current) {
     ProcessAggregate total; total.listed=ids.size();
@@ -308,12 +354,14 @@ bool sameProbe(int dir,const std::string& root,const std::string& path,const Pro
 
 struct OracleDonor {
     std::string bundle, uid, aaState, evidenceSource;
+    std::string writebackFilePath;
     std::uint64_t pid=0, start=0, aaPid=0, aaUid=0, procStart=0;
-    bool coldReady=false,windowReady=false, windowVisible=true,windowFocused=true,lifecycleClear=false,procVerified=false;
-    double coldReadyAt=0,backgroundSince=0,lastHeartbeat=0;
+    std::uint64_t writebackFileDev=0, writebackFileIno=0, writebackFileSize=0;
+    bool coldReady=false,dailyReady=false,windowReady=false, windowVisible=true,windowFocused=true,lifecycleClear=false,procVerified=false;
+    double readyAt=0,backgroundSince=0,lastHeartbeat=0;
     double aaObserved=0,windowObserved=0,procObserved=0,lifecycleObserved=0;
 };
-struct OracleRequest { std::string id, caseId; double launch=0; Bytes needed=0; OracleDonor donors[2]; };
+struct OracleRequest { std::string id, caseId; double launch=0; Bytes needed=0; unsigned schemaVersion=1; std::vector<OracleDonor> donors; };
 std::vector<std::string> splitPipe(const std::string& line) {
     std::vector<std::string> fields; std::istringstream in(line); std::string field;
     while(std::getline(in,field,'|')) fields.push_back(trim(field));
@@ -325,19 +373,61 @@ OracleRequest parseOracleRequest(const std::string& text) {
     const std::string base="event_id|case_id|launch_boottime_s|planned_needed_bytes|";
     const std::string donorFields="bundle|uid|pid|start_ticks|cold_ready|window_ready|cold_ready_boottime_s|background_since_s|last_heartbeat_s|aa_pid|aa_uid|aa_state|aa_observed_boottime_s|window_visible|window_focused|window_observed_boottime_s|proc_verified|proc_start_ticks|proc_observed_boottime_s|lifecycle_clear|lifecycle_observed_boottime_s|background_evidence_source";
     auto prefixedFields=[](const std::string& prefix,const std::string& fields) { std::istringstream names(fields); std::ostringstream result; std::string name; bool first=true; while(std::getline(names,name,'|')) { if(!first) result<<'|'; result<<prefix<<name; first=false; } return result.str(); };
-    const std::string expected=base+prefixedFields("donor_a_",donorFields)+"|"+prefixedFields("donor_b_",donorFields);
-    if(trim(header)!=expected) throw std::runtime_error("oracle schedule header mismatch");
     std::string extra; if(std::getline(in,extra) && !trim(extra).empty()) throw std::runtime_error("oracle schedule must contain exactly one request");
-    const auto f=splitPipe(row); if(f.size()!=48) throw std::runtime_error("oracle schedule field count mismatch");
-    OracleRequest r; r.id=f[0]; r.caseId=f[1]; r.launch=realValue(f[2]); r.needed=uintValue(f[3]);
-    if(!safeName(r.id) || !safeName(r.caseId) || r.launch<=0 || r.needed==0) throw std::runtime_error("oracle event fields invalid");
-    for(int i=0;i<2;++i) { const auto n=static_cast<std::size_t>(4+i*22); auto& d=r.donors[i];
-        d.bundle=f[n]; d.uid=f[n+1]; d.pid=uintValue(f[n+2]); d.start=uintValue(f[n+3]); d.coldReady=boolValue(f[n+4]); d.windowReady=boolValue(f[n+5]); d.coldReadyAt=realValue(f[n+6]); d.backgroundSince=realValue(f[n+7]); d.lastHeartbeat=realValue(f[n+8]);
-        d.aaPid=uintValue(f[n+9]); d.aaUid=uintValue(f[n+10]); d.aaState=f[n+11]; d.aaObserved=realValue(f[n+12]); d.windowVisible=boolValue(f[n+13]); d.windowFocused=boolValue(f[n+14]); d.windowObserved=realValue(f[n+15]); d.procVerified=boolValue(f[n+16]); d.procStart=uintValue(f[n+17]); d.procObserved=realValue(f[n+18]); d.lifecycleClear=boolValue(f[n+19]); d.lifecycleObserved=realValue(f[n+20]); d.evidenceSource=f[n+21];
-        if(d.bundle.empty() || d.bundle.find('/')!=std::string::npos || d.uid.empty() || !d.pid || !d.start || !d.coldReady || !d.windowReady || d.coldReadyAt<=0 || d.backgroundSince<=0 || d.lastHeartbeat<0 || d.backgroundSince<d.coldReadyAt || d.aaPid!=d.pid || d.aaUid!=uintValue(d.uid) || d.aaState!="BACKGROUND" || d.aaObserved<=0 || d.windowVisible || d.windowFocused || d.windowObserved<=0 || !d.procVerified || d.procStart!=d.start || d.procObserved<=0 || !d.lifecycleClear || d.lifecycleObserved<=0 || (d.evidenceSource!="hap_heartbeat" && d.evidenceSource!="os_snapshot"))
-            throw std::runtime_error("oracle donor registration invalid");
+    const std::string legacyHeader=base+prefixedFields("donor_a_",donorFields)+"|"+prefixedFields("donor_b_",donorFields);
+    auto f=splitPipe(row); OracleRequest r;
+    if(trim(header)==legacyHeader) {
+        if(f.size()!=48) throw std::runtime_error("oracle schedule field count mismatch");
+        r.id=f[0]; r.caseId=f[1]; r.launch=realValue(f[2]); r.needed=uintValue(f[3]);
+        for(int i=0;i<2;++i) { const auto n=static_cast<std::size_t>(4+i*22); OracleDonor d;
+            d.bundle=f[n]; d.uid=f[n+1]; d.pid=uintValue(f[n+2]); d.start=uintValue(f[n+3]); d.coldReady=boolValue(f[n+4]); d.dailyReady=d.coldReady; d.windowReady=boolValue(f[n+5]); d.readyAt=realValue(f[n+6]); d.backgroundSince=realValue(f[n+7]); d.lastHeartbeat=realValue(f[n+8]);
+            d.aaPid=uintValue(f[n+9]); d.aaUid=uintValue(f[n+10]); d.aaState=f[n+11]; d.aaObserved=realValue(f[n+12]); d.windowVisible=boolValue(f[n+13]); d.windowFocused=boolValue(f[n+14]); d.windowObserved=realValue(f[n+15]); d.procVerified=boolValue(f[n+16]); d.procStart=uintValue(f[n+17]); d.procObserved=realValue(f[n+18]); d.lifecycleClear=boolValue(f[n+19]); d.lifecycleObserved=realValue(f[n+20]); d.evidenceSource=f[n+21]; r.donors.push_back(d);
+        }
+    } else {
+        const std::string fields="bundle|uid|pid|start_ticks|daily_ready|window_ready|daily_ready_boottime_s|background_since_s|aa_pid|aa_uid|aa_state|aa_observed_boottime_s|window_visible|window_focused|window_observed_boottime_s|proc_verified|proc_start_ticks|proc_observed_boottime_s|lifecycle_clear|lifecycle_observed_boottime_s|background_evidence_source";
+        std::ostringstream expectedV2,expectedV3;
+        expectedV2<<"schema_version|event_id|case_id|launch_boottime_s|planned_needed_bytes|donor_count";
+        expectedV3<<"schema_version|event_id|case_id|launch_boottime_s|planned_needed_bytes|donor_count";
+        for(unsigned i=1;i<=8;++i) {
+            const auto prefix="donor_"+std::to_string(i)+"_";
+            expectedV2<<'|'<<prefixedFields(prefix,fields);
+            expectedV3<<'|'<<prefixedFields(prefix,fields+"|writeback_file_path|writeback_file_dev|writeback_file_ino|writeback_file_size");
+        }
+        const bool schema3=trim(header)==expectedV3.str();
+        if(trim(header)!=expectedV2.str() && !schema3) throw std::runtime_error("oracle schedule header mismatch");
+        if(f.size()<6 || (schema3?f[0]!="3":f[0]!="2")) throw std::runtime_error("oracle schedule schema version mismatch");
+        r.schemaVersion=schema3?3U:2U; r.id=f[1]; r.caseId=f[2]; r.launch=realValue(f[3]); r.needed=uintValue(f[4]);
+        const auto count=uintValue(f[5]); const std::size_t donorWidth=schema3?25U:21U;
+        if(count<1 || count>8 || f.size()!=6+count*donorWidth) throw std::runtime_error(schema3?"oracle v3 donor count/field count mismatch":"oracle v2 donor count/field count mismatch");
+        std::set<std::pair<std::uint64_t,std::uint64_t>> fileIds;
+        for(std::size_t i=0;i<count;++i) { const auto n=6+i*donorWidth; OracleDonor d;
+            d.bundle=f[n]; d.uid=f[n+1]; d.pid=uintValue(f[n+2]); d.start=uintValue(f[n+3]); d.dailyReady=boolValue(f[n+4]); d.windowReady=boolValue(f[n+5]); d.readyAt=realValue(f[n+6]); d.backgroundSince=realValue(f[n+7]);
+            d.aaPid=uintValue(f[n+8]); d.aaUid=uintValue(f[n+9]); d.aaState=f[n+10]; d.aaObserved=realValue(f[n+11]); d.windowVisible=boolValue(f[n+12]); d.windowFocused=boolValue(f[n+13]); d.windowObserved=realValue(f[n+14]); d.procVerified=boolValue(f[n+15]); d.procStart=uintValue(f[n+16]); d.procObserved=realValue(f[n+17]); d.lifecycleClear=boolValue(f[n+18]); d.lifecycleObserved=realValue(f[n+19]); d.evidenceSource=f[n+20]; r.donors.push_back(d);
+            if(schema3) {
+                d.writebackFilePath=f[n+21]; d.writebackFileDev=uintValue(f[n+22]); d.writebackFileIno=uintValue(f[n+23]); d.writebackFileSize=uintValue(f[n+24]);
+                if(d.writebackFilePath!="memscene_"+r.caseId+".pages" || !d.writebackFileDev || !d.writebackFileIno || !d.writebackFileSize ||
+                   !fileIds.insert({d.writebackFileDev,d.writebackFileIno}).second)
+                    throw std::runtime_error("oracle v3 writeback file registration invalid or duplicate");
+                r.donors.back()=d;
+            }
+        }
     }
-    if(r.donors[0].pid==r.donors[1].pid || r.donors[0].bundle==r.donors[1].bundle) throw std::runtime_error("oracle donor registrations duplicate");
+    if(r.id.empty() || r.caseId.empty()) throw std::runtime_error("oracle event fields invalid");
+    if(!safeName(r.id) || !safeName(r.caseId) || r.launch<=0 || r.needed==0) throw std::runtime_error("oracle event fields invalid");
+    std::set<std::string> bundles,leaves; std::set<std::uint64_t> pids,uids;
+    for(auto& d:r.donors) {
+        const bool readiness=r.schemaVersion>=2?d.dailyReady:d.coldReady;
+        if(d.bundle.empty() || d.bundle.find('/')!=std::string::npos || d.uid.empty() || !d.pid || !d.start || !readiness || !d.windowReady || d.readyAt<=0 || d.backgroundSince<=0 || d.backgroundSince<d.readyAt || d.aaPid!=d.pid || d.aaUid!=uintValue(d.uid) || d.aaState!="BACKGROUND" || d.aaObserved<=0 || d.windowVisible || d.windowFocused || d.windowObserved<=0 || !d.procVerified || d.procStart!=d.start || d.procObserved<=0 || !d.lifecycleClear || d.lifecycleObserved<=0 || (r.schemaVersion==1 && d.lastHeartbeat<0) || (d.evidenceSource!="hap_heartbeat" && d.evidenceSource!="os_snapshot") || (r.schemaVersion>=2 && d.evidenceSource!="os_snapshot"))
+            throw std::runtime_error("oracle donor registration invalid");
+        if(r.schemaVersion>=2) {
+            bool allowed=false; for(unsigned i=1;i<=8;++i) if(d.bundle=="io.memscene.scene4.workload.a"+std::to_string(i)) allowed=true;
+            if(!allowed) throw std::runtime_error("oracle profile target is outside the exact a1..a8 allowlist");
+        }
+        if(!bundles.insert(d.bundle).second || !pids.insert(d.pid).second ||
+            (r.schemaVersion>=2 && (!uids.insert(uintValue(d.uid)).second || !leaves.insert(d.bundle+"_"+d.uid).second)))
+            throw std::runtime_error("oracle donor registrations duplicate");
+    }
+    if(r.schemaVersion>=2 && r.donors.size()>8) throw std::runtime_error("oracle profile donor limit exceeded");
     return r;
 }
 std::string statusUid(const std::string& status) {
@@ -356,6 +446,70 @@ std::optional<OracleRssSample> sampleOracleRss(const OracleDonor& donor,const Ap
             app.path,before,status,cgroup,after);
     } catch(const std::exception&) { return {}; }
 }
+struct OracleWritebackFile { FD root,fd; std::uint64_t rootDev=0,rootIno=0; };
+bool isProcFileBackend(const std::string& backend) { return backend=="proc_file" || backend=="proc_file_writeback"; }
+OracleWritebackFile openOracleWritebackTestFile(const OracleDonor& donor,const App& app,const std::string& caseId) {
+    if(donor.writebackFilePath!="memscene_"+caseId+".pages")
+        throw std::runtime_error("writeback_file_path_not_exact_case_test_file");
+    const std::string proc="/proc/"+std::to_string(donor.pid);
+    const auto before=parseProcStat(donor.pid,readPath(proc+"/stat"));
+    if(before.startTicks!=donor.start || statusUid(readPath(proc+"/status"))!=donor.uid ||
+       !processInAppCgroup(readPath(proc+"/cgroup"),app.path))
+        throw std::runtime_error("writeback_target_identity_changed_before_open");
+    // Following this one proc magic link selects the target process mount namespace.
+    FD namespaceRoot(::open((proc+"/root").c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC));
+    if(namespaceRoot.get()<0) throw error("open target process root namespace");
+    struct stat rootIdentity{};
+    if(::fstat(namespaceRoot.get(),&rootIdentity)!=0) throw error("stat target process root namespace");
+    FD dir(::fcntl(namespaceRoot.get(),F_DUPFD_CLOEXEC,3));
+    if(dir.get()<0) throw error("dup target process root namespace");
+    for(const char* part:{"data","storage","el2","base","haps","entry","files"}) {
+        FD next(::openat(dir.get(),part,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW));
+        if(next.get()<0) throw error("open target filesDir component");
+        dir=std::move(next);
+    }
+    FD file(::openat(dir.get(),donor.writebackFilePath.c_str(),O_RDWR|O_CLOEXEC|O_NOFOLLOW));
+    if(file.get()<0) throw error("open registered writeback test file");
+    struct stat fileStat{};
+    if(::fstat(file.get(),&fileStat)!=0) throw error("fstat registered writeback test file");
+    if(!S_ISREG(fileStat.st_mode) || fileStat.st_nlink!=1 || fileStat.st_size<0 ||
+       static_cast<std::uint64_t>(fileStat.st_uid)!=uintValue(donor.uid) ||
+       static_cast<std::uint64_t>(fileStat.st_dev)!=donor.writebackFileDev ||
+       static_cast<std::uint64_t>(fileStat.st_ino)!=donor.writebackFileIno ||
+       static_cast<std::uint64_t>(fileStat.st_size)!=donor.writebackFileSize)
+        throw std::runtime_error("registered_writeback_file_identity_mismatch");
+    FD currentRoot(::open((proc+"/root").c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC));
+    struct stat currentRootIdentity{};
+    const auto after=parseProcStat(donor.pid,readPath(proc+"/stat"));
+    if(currentRoot.get()<0 || ::fstat(currentRoot.get(),&currentRootIdentity)!=0 ||
+       currentRootIdentity.st_dev!=rootIdentity.st_dev || currentRootIdentity.st_ino!=rootIdentity.st_ino ||
+       after.startTicks!=donor.start || statusUid(readPath(proc+"/status"))!=donor.uid ||
+       !processInAppCgroup(readPath(proc+"/cgroup"),app.path))
+        throw std::runtime_error("writeback_process_or_namespace_identity_changed_after_open");
+    OracleWritebackFile opened;
+    opened.root=std::move(namespaceRoot); opened.fd=std::move(file);
+    opened.rootDev=static_cast<std::uint64_t>(rootIdentity.st_dev); opened.rootIno=static_cast<std::uint64_t>(rootIdentity.st_ino);
+    return opened;
+}
+void verifyOracleWritebackFile(const OracleWritebackFile& file,const OracleDonor& donor,const App& app) {
+    const std::string proc="/proc/"+std::to_string(donor.pid);
+    const auto before=parseProcStat(donor.pid,readPath(proc+"/stat"));
+    struct stat registered{},currentRoot{},heldRoot{};
+    FD root(::open((proc+"/root").c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC));
+    if(root.get()<0 || ::fstat(root.get(),&currentRoot)!=0 || ::fstat(file.root.get(),&heldRoot)!=0 || ::fstat(file.fd.get(),&registered)!=0)
+        throw error("verify writeback file/process root identity");
+    const auto after=parseProcStat(donor.pid,readPath(proc+"/stat"));
+    if(before.startTicks!=donor.start || after.startTicks!=donor.start ||
+       currentRoot.st_dev!=heldRoot.st_dev || currentRoot.st_ino!=heldRoot.st_ino ||
+       static_cast<std::uint64_t>(currentRoot.st_dev)!=file.rootDev || static_cast<std::uint64_t>(currentRoot.st_ino)!=file.rootIno ||
+       statusUid(readPath(proc+"/status"))!=donor.uid || !processInAppCgroup(readPath(proc+"/cgroup"),app.path) ||
+       !S_ISREG(registered.st_mode) || registered.st_nlink!=1 || registered.st_size<0 ||
+       static_cast<std::uint64_t>(registered.st_uid)!=uintValue(donor.uid) ||
+       static_cast<std::uint64_t>(registered.st_dev)!=donor.writebackFileDev ||
+       static_cast<std::uint64_t>(registered.st_ino)!=donor.writebackFileIno ||
+       static_cast<std::uint64_t>(registered.st_size)!=donor.writebackFileSize)
+        throw std::runtime_error("writeback_file_or_process_identity_changed");
+}
 std::string oracleFreshnessFailureImpl(bool structuralEvidenceValid,double now,
     const std::vector<std::pair<std::string,double>>& observations,double maxAgeSeconds) {
     if(!structuralEvidenceValid) return "identity_or_background_invariant_failed";
@@ -372,8 +526,9 @@ bool oracleFreshnessFailureRetryableImpl(const std::string& reason) {
     return reason.find("_evidence_stale")!=std::string::npos ||
         reason.find("_telemetry_missing")!=std::string::npos;
 }
-std::string oracleBackgroundFailure(const Options& o,const App& app,const OracleDonor& donor,double now) {
-    if(now<donor.coldReadyAt) return "clock_before_cold_ready";
+std::string oracleBackgroundFailure(const Options& o,const App& app,const OracleDonor& donor,double now,
+    CgroupMemberObservation* memberObservation=nullptr) {
+    if(now<donor.readyAt) return o.oracleProfile=="peak_transition_os_snapshot"?"clock_before_daily_ready":"clock_before_cold_ready";
     if(now<donor.backgroundSince) return "clock_before_background_enter";
     if(donor.aaPid!=donor.pid) return "aa_pid_mismatch";
     if(donor.aaUid!=uintValue(donor.uid)) return "aa_uid_mismatch";
@@ -384,24 +539,37 @@ std::string oracleBackgroundFailure(const Options& o,const App& app,const Oracle
     if(donor.procStart!=donor.start) return "proc_start_ticks_mismatch";
     if(!donor.lifecycleClear) return "lifecycle_not_clear";
     if(donor.evidenceSource!="hap_heartbeat" && donor.evidenceSource!="os_snapshot") return "evidence_source_unknown";
-    if(donor.lastHeartbeat>now) return "heartbeat_timestamp_in_future";
-    if(donor.evidenceSource=="hap_heartbeat" && donor.lastHeartbeat<=0) return "heartbeat_telemetry_missing";
+    if(o.oracleProfile=="peak_transition_os_snapshot" && donor.evidenceSource!="os_snapshot") return "os_snapshot_required";
+    if(o.oracleProfile!="peak_transition_os_snapshot" && donor.lastHeartbeat>now) return "heartbeat_timestamp_in_future";
+    if(o.oracleProfile!="peak_transition_os_snapshot" && donor.evidenceSource=="hap_heartbeat" && donor.lastHeartbeat<=0) return "heartbeat_telemetry_missing";
     std::vector<std::pair<std::string,double>> observations={{"aa",donor.aaObserved},{"window",donor.windowObserved},
        {"proc",donor.procObserved},{"lifecycle",donor.lifecycleObserved}};
-    if(donor.evidenceSource=="hap_heartbeat") observations.emplace_back("heartbeat",donor.lastHeartbeat);
+    if(o.oracleProfile!="peak_transition_os_snapshot" && donor.evidenceSource=="hap_heartbeat") observations.emplace_back("heartbeat",donor.lastHeartbeat);
     const auto freshness=oracleFreshnessFailureImpl(true,now,observations,2.5);
     if(!freshness.empty()) return freshness;
-    const std::string a1="io.memscene.scene4.workload.a1",a2="io.memscene.scene4.workload.a2";
-    if(donor.bundle!=a1 && donor.bundle!=a2) return "donor_bundle_not_allowlisted";
+    const std::string prefix="io.memscene.scene4.workload.a";
+    bool bundleAllowed=false;
+    for(unsigned i=1;i<=(o.oracleProfile=="peak_transition_os_snapshot"?8U:2U);++i)
+        if(donor.bundle==prefix+std::to_string(i)) bundleAllowed=true;
+    if(!bundleAllowed) return "donor_bundle_not_allowlisted";
     const auto slash=app.path.find_last_of('/'); const auto leaf=slash==std::string::npos?app.path:app.path.substr(slash+1);
     if(leaf!=donor.bundle+"_"+donor.uid) return "cgroup_leaf_mismatch";
     FD root(::open(o.root.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW)); if(root.get()<0) return "cgroup_root_unavailable";
     FD dir(openBeneath(root.get(),app.path)); if(dir.get()<0) return "cgroup_leaf_unavailable";
-    const auto ids=processIds(dir.get());
+    std::vector<std::uint64_t> ids;
+    if(o.oracleProfile=="peak_transition_os_snapshot") {
+        const auto members=observeCgroupMembers(dir.get());
+        if(memberObservation) *memberObservation=members;
+        if(!members.readOk) return "cgroup_member_list_read_error";
+        if(!members.parseValid) return "cgroup_member_list_parse_unknown";
+        if(members.entryCount!=1 || members.uniquePids.size()!=1) return "cgroup_member_count_changed";
+        ids=members.uniquePids;
+    } else ids=processIds(dir.get());
     if(ids.size()!=1) return "cgroup_member_count_changed";
     if(ids.front()!=donor.pid) return "cgroup_pid_mismatch";
     const auto current=maybeAt(dir.get(),"memory.current"); if(!current) return "memory_current_telemetry_missing";
-    if(uintValue(trim(*current))<512*MiB) return "min_keep_below_floor";
+    const Bytes keepFloor=o.oracleRatioSemantics=="cumulative_anon_watermark"?o.oracleCumulativeKeep:512*MiB;
+    if(uintValue(trim(*current))<keepFloor) return "min_keep_below_floor";
     for(const auto pid:ids) {
         const std::string proc="/proc/"+std::to_string(pid);
         const auto stat=parseProcStat(pid,readPath(proc+"/stat"));
@@ -414,23 +582,137 @@ std::string oracleBackgroundFailure(const Options& o,const App& app,const Oracle
     }
     return {};
 }
-bool freshOracleBackground(const Options& o,const App& app,const OracleDonor& donor,double now) {
-    return oracleBackgroundFailure(o,app,donor,now).empty();
-}
 bool sameOracleRegistration(const OracleRequest& a,const OracleRequest& b) {
-    if(a.id!=b.id || a.caseId!=b.caseId || a.launch!=b.launch || a.needed!=b.needed) return false;
-    for(int i=0;i<2;++i) { const auto& x=a.donors[i]; const auto& y=b.donors[i];
-        if(x.bundle!=y.bundle || x.uid!=y.uid || x.pid!=y.pid || x.start!=y.start || x.coldReady!=y.coldReady || x.windowReady!=y.windowReady || x.coldReadyAt!=y.coldReadyAt || x.backgroundSince!=y.backgroundSince || y.lastHeartbeat<x.lastHeartbeat) return false;
+    if(a.id!=b.id || a.caseId!=b.caseId || a.launch!=b.launch || a.needed!=b.needed || a.schemaVersion!=b.schemaVersion || a.donors.size()!=b.donors.size()) return false;
+    for(std::size_t i=0;i<a.donors.size();++i) { const auto& x=a.donors[i]; const auto& y=b.donors[i];
+        if(x.bundle!=y.bundle || x.uid!=y.uid || x.pid!=y.pid || x.start!=y.start || x.coldReady!=y.coldReady || x.dailyReady!=y.dailyReady || x.windowReady!=y.windowReady || x.readyAt!=y.readyAt || x.backgroundSince!=y.backgroundSince || y.lastHeartbeat<x.lastHeartbeat ||
+           (a.schemaVersion==3 && (x.writebackFilePath!=y.writebackFilePath || x.writebackFileDev!=y.writebackFileDev || x.writebackFileIno!=y.writebackFileIno || x.writebackFileSize!=y.writebackFileSize))) return false;
     }
     return true;
 }
-struct OracleActionResult { std::string actionId,eventId,caseId,bundle,status,evidenceSource,feedbackSampleStatus,ratioSemantics="resident_incremental"; std::uint64_t pid=0,start=0; std::string uid; double deadline=0,elapsedMs=0,aaObserved=0,windowObserved=0,procObserved=0,lifecycleObserved=0; std::optional<double> syscallStartBoot,syscallReturnBoot,writeDurationMs,feedbackCompleteBoot; std::optional<bool> writeOverlapsDeadline,feedbackOverlapsDeadline; Bytes needed=0,remaining=0,nominal=0,input=0,feedbackDrop=0,preRssAnonKiB=0,postRssAnonKiB=0,totalAnonProxyBytes=0,currentVmSwapBytes=0,estimatedIncrementBytes=0,estimatedRetainedBytes=0; std::int64_t signedRssDeltaKiB=0; unsigned ratio=0,plannedRatio=0; long writeLength=-1; int errorNo=0; bool feedbackIdentityVerified=false,overlap=false; };
-OracleActionResult performOracleAction(const Options& o,const App& app,const OracleDonor& donor,const OracleRequest& req,unsigned ratio,unsigned priorSuccessfulRatio,Bytes nominal,Bytes remaining,Bytes input,const std::string& actionId) {
+struct OracleActionResult { std::string actionId,eventId,caseId,bundle,status,evidenceSource,feedbackSampleStatus,ratioSemantics="resident_incremental",backend="force_shrink_all"; std::uint64_t pid=0,start=0; std::string uid; double deadline=0,elapsedMs=0,aaObserved=0,windowObserved=0,procObserved=0,lifecycleObserved=0; std::optional<double> syscallStartBoot,syscallReturnBoot,writeDurationMs,feedbackCompleteBoot,writebackStartBoot,writebackReturnBoot; std::optional<bool> writeOverlapsDeadline,feedbackOverlapsDeadline; Bytes needed=0,remaining=0,nominal=0,input=0,feedbackDrop=0,preRssAnonKiB=0,postRssAnonKiB=0,preRssFileKiB=0,postRssFileKiB=0,preRssTotalKiB=0,postRssTotalKiB=0,keepReserveBytes=0,preFree=0,postFree=0,preAvailable=0,postAvailable=0,preCached=0,postCached=0,preDirty=0,postDirty=0,writebackRssAnonKiB=0,writebackRssFileKiB=0,writebackFree=0,writebackAvailable=0,writebackCached=0,writebackDirty=0,totalAnonProxyBytes=0,currentVmSwapBytes=0,estimatedIncrementBytes=0,estimatedRetainedBytes=0; std::int64_t signedRssDeltaKiB=0,signedRssFileDeltaKiB=0; unsigned ratio=0,plannedRatio=0,schemaVersion=1; long writeLength=-1,writebackReturn=-2; int errorNo=0,writebackErrno=0; bool writeAttempted=false,writebackAttempted=false,feedbackIdentityVerified=false,fileFeedbackPresent=false,overlap=false; };
+void appendOracleWritebackStage(const Options& options,const OracleActionResult& result,const char* stage,
+    const std::optional<double>& start,const std::optional<double>& returned,long returnValue,int errorNumber,
+    const struct stat* fileStat,const OracleRssSample* rss,const System* system,const std::string& status) {
+    const fs::path path=options.oracleLedger+".proc_file_writeback_v1.csv";
+    static const std::string header="action_id,event_id,case_id,bundle,pid,uid,start_ticks,stage,file_path,file_dev,file_inode,file_size,file_uid,syscall_start_boottime_s,syscall_return_boottime_s,return_value,errno,rss_anon_kib,rss_file_kib,dirty_bytes,cached_bytes,memfree_bytes,memavailable_bytes,status";
+    const bool fresh=!fs::exists(path) || fs::file_size(path)==0;
+    if(!fresh) { std::ifstream prior(path); std::string existing; if(!std::getline(prior,existing) || existing!=header) throw std::runtime_error("proc_file_writeback ledger schema mismatch"); }
+    std::ofstream out(path,std::ios::app); if(!out) throw std::runtime_error("cannot append proc_file_writeback ledger");
+    if(fresh) out<<header<<'\n';
+    auto number=[](const std::optional<double>& value) { return value?std::to_string(*value):std::string{}; };
+    out<<csvCell(result.actionId)<<','<<csvCell(result.eventId)<<','<<csvCell(result.caseId)<<','<<csvCell(result.bundle)<<','<<result.pid<<','<<csvCell(result.uid)<<','<<result.start<<','<<stage<<','<<csvCell("memscene_"+result.caseId+".pages")<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_dev)):std::string{})<<','<<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_ino)):std::string{})<<','<<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_size)):std::string{})<<','<<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_uid)):std::string{})<<','
+       <<number(start)<<','<<number(returned)<<','<<returnValue<<','<<errorNumber<<','<<(rss?std::to_string(rss->rssAnonKiB):std::string{})<<','<<(rss&&rss->rssFileKiB?std::to_string(*rss->rssFileKiB):std::string{})<<','
+       <<(system?std::to_string(system->dirty):std::string{})<<','<<(system?std::to_string(system->cached):std::string{})<<','<<(system?std::to_string(system->free):std::string{})<<','<<(system?std::to_string(system->available):std::string{})<<','<<csvCell(status)<<'\n';
+    out.flush(); if(!out) throw std::runtime_error("proc_file_writeback ledger write failed");
+}
+void appendOraclePostwriteRecheckStage(const Options& options,const OracleActionResult& result,
+    double started,double ended,const std::string& initialReason,const std::string& finalReason,
+    bool recovered,const struct stat* fileStat,const OracleRssSample* rss,const System* system) {
+    const fs::path path=options.oracleLedger+".postwrite_recheck_v1.csv";
+    static const std::string header="action_id,event_id,case_id,bundle,pid,uid,start_ticks,stage_start_boottime_s,stage_end_boottime_s,initial_stale_reason,final_reason,recovered,file_dev,file_inode,file_size,file_uid,rss_anon_kib,rss_file_kib,rss_total_kib,dirty_bytes,cached_bytes,memfree_bytes,memavailable_bytes";
+    const bool fresh=!fs::exists(path) || fs::file_size(path)==0;
+    if(!fresh) { std::ifstream prior(path); std::string existing; if(!std::getline(prior,existing) || existing!=header) throw std::runtime_error("postwrite recheck ledger schema mismatch"); }
+    std::ofstream out(path,std::ios::app); if(!out) throw std::runtime_error("cannot append postwrite recheck ledger");
+    if(fresh) out<<header<<'\n';
+    out<<csvCell(result.actionId)<<','<<csvCell(result.eventId)<<','<<csvCell(result.caseId)<<','<<csvCell(result.bundle)<<','<<result.pid<<','<<csvCell(result.uid)<<','<<result.start<<','
+       <<std::setprecision(17)<<started<<','<<ended<<','<<csvCell(initialReason)<<','<<csvCell(finalReason)<<','<<(recovered?"true":"false")<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_dev)):std::string{})<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_ino)):std::string{})<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_size)):std::string{})<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_uid)):std::string{})<<','
+       <<(rss?std::to_string(rss->rssAnonKiB):std::string{})<<','<<(rss&&rss->rssFileKiB?std::to_string(*rss->rssFileKiB):std::string{})<<','
+       <<(rss&&rss->rssKiB?std::to_string(*rss->rssKiB):std::string{})<<','
+       <<(system?std::to_string(system->dirty):std::string{})<<','<<(system?std::to_string(system->cached):std::string{})<<','
+       <<(system?std::to_string(system->free):std::string{})<<','<<(system?std::to_string(system->available):std::string{})<<'\n';
+    out.flush(); if(!out) throw std::runtime_error("postwrite recheck ledger write failed");
+}
+void appendOraclePostFsyncRecheckStage(const Options& options,const OracleActionResult& result,
+    double started,double ended,const std::string& initialReason,const std::string& finalReason,
+    bool recovered,const struct stat* fileStat,const OracleRssSample* rss,const System* system) {
+    const fs::path path=options.oracleLedger+".post_fsync_recheck_v1.csv";
+    static const std::string header="action_id,event_id,case_id,bundle,pid,uid,start_ticks,stage_start_boottime_s,stage_end_boottime_s,wait_duration_ms,initial_reason,final_reason,recovered,file_dev,file_inode,file_size,file_uid,rss_anon_kib,rss_file_kib,rss_total_kib,dirty_bytes,cached_bytes,memfree_bytes,memavailable_bytes";
+    const bool fresh=!fs::exists(path) || fs::file_size(path)==0;
+    if(!fresh) { std::ifstream prior(path); std::string existing; if(!std::getline(prior,existing) || existing!=header) throw std::runtime_error("post-fsync recheck ledger schema mismatch"); }
+    std::ofstream out(path,std::ios::app); if(!out) throw std::runtime_error("cannot append post-fsync recheck ledger");
+    if(fresh) out<<header<<'\n';
+    out<<csvCell(result.actionId)<<','<<csvCell(result.eventId)<<','<<csvCell(result.caseId)<<','<<csvCell(result.bundle)<<','<<result.pid<<','<<csvCell(result.uid)<<','<<result.start<<','
+       <<std::setprecision(17)<<started<<','<<ended<<','<<((ended-started)*1000.0)<<','<<csvCell(initialReason)<<','<<csvCell(finalReason)<<','<<(recovered?"true":"false")<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_dev)):std::string{})<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_ino)):std::string{})<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_size)):std::string{})<<','
+       <<(fileStat?std::to_string(static_cast<std::uint64_t>(fileStat->st_uid)):std::string{})<<','
+       <<(rss?std::to_string(rss->rssAnonKiB):std::string{})<<','<<(rss&&rss->rssFileKiB?std::to_string(*rss->rssFileKiB):std::string{})<<','
+       <<(rss&&rss->rssKiB?std::to_string(*rss->rssKiB):std::string{})<<','
+       <<(system?std::to_string(system->dirty):std::string{})<<','<<(system?std::to_string(system->cached):std::string{})<<','
+       <<(system?std::to_string(system->free):std::string{})<<','<<(system?std::to_string(system->available):std::string{})<<'\n';
+    out.flush(); if(!out) throw std::runtime_error("post-fsync recheck ledger write failed");
+}
+struct OracleSwapTelemetryRow {
+    std::string groupScope,groupPath,node;
+    OracleSwapTelemetryRead read;
+};
+std::vector<OracleSwapTelemetryRow> sampleOracleSwapGroups(int root,const std::string& leafPath) {
+    std::vector<OracleSwapTelemetryRow> rows;
+    const auto slash=leafPath.rfind('/');
+    const std::string parentPath=slash==std::string::npos?std::string{}:leafPath.substr(0,slash);
+    const std::string parentScope=slash==std::string::npos?"root_scope":"uid_parent_scope";
+    for(const auto& group:std::vector<std::pair<std::string,std::string>>{{"leaf_scope",leafPath},{parentScope,parentPath}}) {
+        FD groupFd;
+        int groupError=0;
+        try {
+            if(group.second.empty()) groupFd=FD(::fcntl(root,F_DUPFD_CLOEXEC,3));
+            else groupFd=openBeneath(root,group.second);
+            if(groupFd.get()<0) groupError=errno;
+        } catch(const std::exception&) { groupError=errno; }
+        for(const auto& node:std::vector<std::string>{"memory.eswap_info","memory.zswap_info"}) {
+            OracleSwapTelemetryRow row; row.groupScope=group.first; row.groupPath=group.second; row.node=node;
+            if(groupError) {
+                row.read.status="group_open_error"; row.read.errorNumber=groupError;
+                row.read.startedBoottime=monotonic(); row.read.endedBoottime=row.read.startedBoottime;
+            } else row.read=readOracleSwapTelemetryNode(groupFd.get(),node,4096);
+            rows.push_back(std::move(row));
+        }
+    }
+    return rows;
+}
+void appendOracleSwapTelemetry(const Options& options,const OracleActionResult& result,
+    const std::vector<OracleSwapTelemetryRow>& before,const std::vector<OracleSwapTelemetryRow>& after) noexcept {
+    try {
+        const fs::path path=options.oracleLedger+".swap_telemetry_v1.csv";
+        static const std::string header="action_id,event_id,case_id,bundle,pid,uid,start_ticks,write_attempted,write_return,write_errno,syscall_start_boottime_s,syscall_return_boottime_s,stage,read_start_boottime_s,read_end_boottime_s,read_duration_ms,group_scope,group_path,node,read_status,read_errno,raw";
+        const bool fresh=!fs::exists(path) || fs::file_size(path)==0;
+        if(!fresh) { std::ifstream prior(path); std::string existing; if(!std::getline(prior,existing) || existing!=header) throw std::runtime_error("swap telemetry ledger schema mismatch"); }
+        std::ofstream out(path,std::ios::app); if(!out) throw std::runtime_error("cannot append swap telemetry ledger");
+        if(fresh) out<<header<<'\n';
+        auto writeRows=[&](const std::vector<OracleSwapTelemetryRow>& rows,const char* stage) {
+            for(const auto& row:rows) {
+                const auto duration=(row.read.endedBoottime-row.read.startedBoottime)*1000.0;
+                const auto fields=std::vector<std::string>{result.actionId,result.eventId,result.caseId,result.bundle,
+                    std::to_string(result.pid),result.uid,std::to_string(result.start),result.writeAttempted?"true":"false",
+                    std::to_string(result.writeLength),std::to_string(result.errorNo),
+                    result.syscallStartBoot?std::to_string(*result.syscallStartBoot):std::string{},
+                    result.syscallReturnBoot?std::to_string(*result.syscallReturnBoot):std::string{},stage,
+                    std::to_string(row.read.startedBoottime),std::to_string(row.read.endedBoottime),std::to_string(duration),
+                    row.groupScope,row.groupPath,row.node,row.read.status,std::to_string(row.read.errorNumber),row.read.raw};
+                out<<oracleSwapTelemetryCsvRow(fields)<<'\n';
+            }
+        };
+        writeRows(before,"before_write"); writeRows(after,"after_write");
+        out.flush(); if(!out) throw std::runtime_error("swap telemetry ledger write failed");
+    } catch(const std::exception& e) {
+        std::cerr<<"WARN oracle_swap_telemetry_sidecar action_id="<<result.actionId<<" error="<<e.what()<<'\n';
+    }
+}
+OracleActionResult performOracleAction(const Options& o,const App& app,const OracleDonor& donor,const OracleRequest& req,unsigned ratio,unsigned priorSuccessfulRatio,Bytes nominal,Bytes remaining,Bytes input,const Forecast& forecast,const std::string& actionId) {
     OracleActionResult r; r.actionId=actionId; r.eventId=req.id; r.caseId=req.caseId; r.bundle=donor.bundle; r.pid=donor.pid; r.uid=donor.uid; r.start=donor.start;
-    r.deadline=req.launch; r.needed=req.needed; r.remaining=remaining; r.nominal=nominal; r.ratio=ratio; r.plannedRatio=ratio; r.ratioSemantics=o.oracleRatioSemantics; r.input=input;
+    r.deadline=req.launch; r.needed=req.needed; r.remaining=remaining; r.nominal=nominal; r.ratio=ratio; r.plannedRatio=ratio; r.schemaVersion=req.schemaVersion; r.ratioSemantics=o.oracleRatioSemantics; r.input=input; r.backend=o.oracleBackend;
     for(const auto& registered:req.donors) if(registered.bundle==donor.bundle) { r.evidenceSource=registered.evidenceSource; r.aaObserved=registered.aaObserved; r.windowObserved=registered.windowObserved; r.procObserved=registered.procObserved; r.lifecycleObserved=registered.lifecycleObserved; }
     const double begin=monotonic();
+    auto finishNoProc=[&](const std::string& status) { r.status=status; r.elapsedMs=(monotonic()-begin)*1000; r.overlap=monotonic()>req.launch; return r; };
     bool writeAttempted=false, writeComplete=false;
+    Control controlAtProcWrite; bool haveControlAtProcWrite=false;
     try {
         if(begin>=req.launch) throw std::runtime_error("event_deadline_passed_before_action_start");
         auto gate=parseControl(readPath(o.control)); if(gate.paused || gate.protectedApps.count(app.name) || gate.protectedApps.count(donor.bundle)) throw std::runtime_error("runtime_control_paused_or_protected");
@@ -442,7 +724,18 @@ OracleActionResult performOracleAction(const Options& o,const App& app,const Ora
         if(!liveFailure.empty()) throw std::runtime_error((oracleFreshnessFailureRetryableImpl(liveFailure)?"oracle_evidence_defer:":"oracle_evidence_reject:")+liveFailure);
         FD root(::open(o.root.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW)); if(root.get()<0) throw error("open oracle cgroup root");
         FD dir=openBeneath(root.get(),app.path);
-        FD writer(::openat(dir.get(),"memory.force_shrink_all",O_WRONLY|O_CLOEXEC|O_NOFOLLOW)); if(writer.get()<0) throw error("open memory.force_shrink_all");
+        FD writer;
+        OracleWritebackFile writebackFile;
+        if(o.oracleBackend=="proc_file_writeback") {
+            if(req.schemaVersion!=3 || o.oracleProfile!="peak_transition_os_snapshot")
+                throw std::runtime_error("proc_file_writeback_requires_profile_schema3");
+            writebackFile=openOracleWritebackTestFile(donor,app,req.caseId);
+        }
+        if(isProcFileBackend(o.oracleBackend)) {
+            const std::string proc="/proc/"+std::to_string(donor.pid)+"/reclaim";
+            writer=FD(::open(proc.c_str(),O_WRONLY|O_CLOEXEC|O_NOFOLLOW));
+        } else writer=FD(::openat(dir.get(),"memory.force_shrink_all",O_WRONLY|O_CLOEXEC|O_NOFOLLOW));
+        if(writer.get()<0) throw error(isProcFileBackend(o.oracleBackend)?"open proc reclaim":"open memory.force_shrink_all");
         const double writeNow=monotonic(); if(writeNow>=req.launch) throw std::runtime_error("event_deadline_passed_before_write");
         gate=parseControl(readPath(o.control)); if(gate.paused || gate.protectedApps.count(app.name) || gate.protectedApps.count(donor.bundle)) throw std::runtime_error("runtime_control_changed_before_write");
         const auto immediatelyLatest=parseOracleRequest(readPath(o.oracleSchedule));
@@ -452,9 +745,207 @@ OracleActionResult performOracleAction(const Options& o,const App& app,const Ora
         const auto immediateFailure=oracleBackgroundFailure(o,app,*immediatelyLive,monotonic());
         if(!immediateFailure.empty()) throw std::runtime_error((oracleFreshnessFailureRetryableImpl(immediateFailure)?"oracle_evidence_defer:":"oracle_evidence_reject:")+immediateFailure);
         r.evidenceSource=immediatelyLive->evidenceSource; r.aaObserved=immediatelyLive->aaObserved; r.windowObserved=immediatelyLive->windowObserved; r.procObserved=immediatelyLive->procObserved; r.lifecycleObserved=immediatelyLive->lifecycleObserved;
-        const auto preSample=sampleOracleRss(*immediatelyLive,app);
+        auto preSample=sampleOracleRss(*immediatelyLive,app);
         if(!preSample) throw std::runtime_error("prewrite_rss_identity_sample_unavailable");
-        r.preRssAnonKiB=preSample->rssAnonKiB; r.feedbackSampleStatus="prewrite_identity_verified";
+        r.preRssAnonKiB=preSample->rssAnonKiB;
+        if(o.oracleBackend=="proc_file_writeback") {
+            const auto wbSysBefore=systemSample(o.proc);
+            const auto wbFileBefore=sampleOracleRss(*immediatelyLive,app);
+            struct stat wbStatBefore{};
+            if(!wbFileBefore || !wbFileBefore->rssFileKiB || ::fstat(writebackFile.fd.get(),&wbStatBefore)!=0)
+                throw std::runtime_error("writeback_preflight_sample_or_fstat_unknown");
+            r.writebackRssAnonKiB=wbFileBefore->rssAnonKiB; r.writebackRssFileKiB=*wbFileBefore->rssFileKiB;
+            r.writebackFree=wbSysBefore.free; r.writebackAvailable=wbSysBefore.available; r.writebackCached=wbSysBefore.cached; r.writebackDirty=wbSysBefore.dirty;
+            appendOracleWritebackStage(o,r,"fdatasync_submit_preflight",{}, {},-2,0,&wbStatBefore,&*wbFileBefore,&wbSysBefore,"not_submitted_stage_ledger_flushed_before_gate");
+            const double submitGate=monotonic();
+            if(submitGate>=req.launch) throw std::runtime_error("event_deadline_passed_after_writeback_stage_ledger_before_fdatasync");
+            gate=parseControl(readPath(o.control));
+            if(gate.paused || gate.protectedApps.count(app.name) || gate.protectedApps.count(donor.bundle))
+                throw std::runtime_error("runtime_control_changed_before_fdatasync");
+            const auto submitRequest=parseOracleRequest(readPath(o.oracleSchedule));
+            if(!sameOracleRegistration(req,submitRequest)) throw std::runtime_error("schedule_registration_changed_before_fdatasync");
+            const OracleDonor* submitDonor=nullptr;
+            for(const auto& item:submitRequest.donors) if(item.bundle==donor.bundle) submitDonor=&item;
+            const double submitFreshness=monotonic();
+            if(!submitDonor) throw std::runtime_error("donor_missing_before_fdatasync");
+            const auto submitFailure=oracleBackgroundFailure(o,app,*submitDonor,submitFreshness);
+            if(!submitFailure.empty()) throw std::runtime_error((oracleFreshnessFailureRetryableImpl(submitFailure)?"oracle_evidence_defer:":"oracle_evidence_reject:")+submitFailure);
+            verifyOracleWritebackFile(writebackFile,donor,app);
+            const auto submitRss=sampleOracleRss(*submitDonor,app);
+            const auto submitSystem=systemSample(o.proc);
+            if(!submitRss || !submitRss->rssFileKiB || !submitRss->rssKiB ||
+               !oracleProcFileWritebackEstimateFits(*submitRss->rssFileKiB,donor.writebackFileSize,nominal) ||
+               !oracleProcFileWritebackSystemGapFits(deficit(o,submitSystem,forecast,req.needed),nominal))
+                throw std::runtime_error("writeback_pre_submit_rss_or_shared_system_reservation_no_longer_fits");
+            const double writebackStart=monotonic();
+            if(writebackStart>=req.launch) throw std::runtime_error("event_deadline_passed_at_fdatasync_start");
+            r.writebackStartBoot=writebackStart; r.writebackAttempted=true;
+            errno=0; const int syncResult=::fdatasync(writebackFile.fd.get()); const int syncErrno=syncResult<0?errno:0;
+            const double syncReturn=monotonic(); r.writebackReturnBoot=syncReturn; r.writebackReturn=syncResult; r.writebackErrno=syncErrno;
+            auto wbSysAfter=systemSample(o.proc);
+            auto wbFileAfter=sampleOracleRss(*immediatelyLive,app);
+            struct stat wbStatAfter{};
+            const bool wbStatOk=::fstat(writebackFile.fd.get(),&wbStatAfter)==0;
+            appendOracleWritebackStage(o,r,"fdatasync_returned",r.writebackStartBoot,r.writebackReturnBoot,syncResult,syncErrno,wbStatOk?&wbStatAfter:nullptr,wbFileAfter?&*wbFileAfter:nullptr,&wbSysAfter,
+                syncResult==0?"fdatasync_returned_success":"fdatasync_returned_error_no_proc");
+            if(syncResult!=0) { r.errorNo=syncErrno; return finishNoProc("writeback_failed_no_proc_no_fallback"); }
+            if(syncReturn>=req.launch) return finishNoProc("writeback_completed_after_deadline_no_proc");
+            verifyOracleWritebackFile(writebackFile,donor,app);
+            const auto currentControl=parseControl(readPath(o.control));
+            if(currentControl.paused || currentControl.protectedApps.count(app.name) || currentControl.protectedApps.count(donor.bundle)) {
+                return finishNoProc("writeback_completed_control_changed_no_proc");
+            }
+            auto afterSyncRequest=parseOracleRequest(readPath(o.oracleSchedule));
+            if(!sameOracleRegistration(req,afterSyncRequest)) return finishNoProc("writeback_completed_schedule_changed_no_proc");
+            const OracleDonor* afterSyncDonor=nullptr;
+            for(const auto& item:afterSyncRequest.donors) if(item.bundle==donor.bundle) afterSyncDonor=&item;
+            double afterSyncNow=monotonic();
+            if(!afterSyncDonor) return finishNoProc("writeback_completed_donor_missing_no_proc");
+            std::string afterSyncFailure=oracleBackgroundFailure(o,app,*afterSyncDonor,afterSyncNow);
+            if(!afterSyncFailure.empty()) {
+                if(!oracleWritebackPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,afterSyncFailure))
+                    return finishNoProc("writeback_completed_identity_or_background_changed_no_proc:"+afterSyncFailure);
+                const double recheckStarted=afterSyncNow;
+                std::string finalReason=afterSyncFailure;
+                bool recovered=false,registrationStable=true,controlStable=true,fileIdentityVerified=false;
+                bool rssKeepFits=false,systemReservationFits=false;
+                std::optional<OracleRssSample> refreshedRss;
+                std::optional<System> refreshedSystem;
+                std::optional<struct stat> refreshedFileStat;
+                const Bytes keepFloor=std::max(app.keep,512*MiB);
+                while(!recovered) {
+                    const double checkTime=monotonic();
+                    const double remainingSeconds=oracleWritebackPostwriteRecheckRemaining(recheckStarted,checkTime,req.launch);
+                    if(remainingSeconds<=0) {
+                        finalReason=checkTime>=req.launch?"event_deadline_passed_during_post_fsync_recheck":"post_fsync_freshness_recheck_timeout";
+                        break;
+                    }
+                    try {
+                        const auto recheckControl=parseControl(readPath(o.control));
+                        if(recheckControl.paused || recheckControl.protectedApps.count(app.name) || recheckControl.protectedApps.count(donor.bundle)) {
+                            controlStable=false; finalReason="runtime_control_paused_or_protected_during_post_fsync_recheck"; break;
+                        }
+                        if(recheckControl.paused!=currentControl.paused || recheckControl.protectedApps!=currentControl.protectedApps ||
+                           recheckControl.boost!=currentControl.boost || recheckControl.until!=currentControl.until) {
+                            controlStable=false; finalReason="runtime_control_changed_during_post_fsync_recheck"; break;
+                        }
+                        auto recheckRequest=parseOracleRequest(readPath(o.oracleSchedule));
+                        if(!sameOracleRegistration(req,recheckRequest)) {
+                            registrationStable=false; finalReason="schedule_registration_changed_during_post_fsync_recheck"; break;
+                        }
+                        const OracleDonor* recheckDonor=nullptr;
+                        for(const auto& item:recheckRequest.donors) if(item.bundle==donor.bundle) recheckDonor=&item;
+                        if(!recheckDonor) { finalReason="donor_missing_during_post_fsync_recheck"; break; }
+                        const double evidenceTime=monotonic();
+                        const auto evidenceFailure=oracleBackgroundFailure(o,app,*recheckDonor,evidenceTime);
+                        if(!evidenceFailure.empty()) {
+                            finalReason=evidenceFailure;
+                            if(!oracleWritebackPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,evidenceFailure)) break;
+                        } else {
+                            verifyOracleWritebackFile(writebackFile,donor,app);
+                            struct stat currentFile{};
+                            if(::fstat(writebackFile.fd.get(),&currentFile)!=0) throw error("fstat writeback file during post-fsync recheck");
+                            refreshedFileStat=currentFile; fileIdentityVerified=true;
+                            refreshedRss=sampleOracleRss(*recheckDonor,app);
+                            refreshedSystem=systemSample(o.proc);
+                            if(!refreshedRss || !refreshedRss->rssFileKiB || !refreshedRss->rssKiB ||
+                               *refreshedRss->rssFileKiB>std::numeric_limits<Bytes>::max()/1024 ||
+                               *refreshedRss->rssKiB>std::numeric_limits<Bytes>::max()/1024) {
+                                finalReason="post_fsync_recheck_rss_unknown"; break;
+                            }
+                            const Bytes fileKiB=*refreshedRss->rssFileKiB;
+                            const Bytes residentKiB=*refreshedRss->rssKiB;
+                            rssKeepFits=oracleProcFileWritebackEstimateFits(fileKiB,donor.writebackFileSize,nominal) &&
+                                residentKiB>=fileKiB && residentKiB-fileKiB>=keepFloor/1024;
+                            const Bytes currentGap=deficit(o,*refreshedSystem,forecast,req.needed);
+                            systemReservationFits=oracleProcFileWritebackSystemGapFits(currentGap,nominal);
+                            if(!rssKeepFits) { finalReason="post_fsync_recheck_file_estimate_or_keep_reserve_failed"; break; }
+                            if(!systemReservationFits) { finalReason="post_fsync_recheck_shared_system_reservation_failed"; break; }
+                            const auto finalControl=parseControl(readPath(o.control));
+                            if(finalControl.paused || finalControl.protectedApps.count(app.name) || finalControl.protectedApps.count(donor.bundle) ||
+                               finalControl.paused!=currentControl.paused || finalControl.protectedApps!=currentControl.protectedApps ||
+                               finalControl.boost!=currentControl.boost || finalControl.until!=currentControl.until) {
+                                controlStable=false; finalReason="runtime_control_changed_after_post_fsync_sample"; break;
+                            }
+                            auto finalRequest=parseOracleRequest(readPath(o.oracleSchedule));
+                            if(!sameOracleRegistration(req,finalRequest)) {
+                                registrationStable=false; finalReason="schedule_registration_changed_after_post_fsync_sample"; break;
+                            }
+                            const OracleDonor* finalDonor=nullptr;
+                            for(const auto& item:finalRequest.donors) if(item.bundle==donor.bundle) finalDonor=&item;
+                            if(!finalDonor) { finalReason="donor_missing_after_post_fsync_sample"; break; }
+                            const double finalGateTime=monotonic();
+                            const auto finalFailure=oracleBackgroundFailure(o,app,*finalDonor,finalGateTime);
+                            if(!oracleWritebackPreProcRecheckMayResume(req.schemaVersion,o.oracleProfile,o.oracleBackend,
+                                   afterSyncFailure,finalFailure,registrationStable,controlStable,fileIdentityVerified,
+                                   rssKeepFits,systemReservationFits,finalGateTime<req.launch)) {
+                                finalReason=finalFailure.empty()?"post_fsync_recheck_gate_incomplete":finalFailure;
+                                if(finalGateTime>=req.launch) finalReason="event_deadline_passed_after_post_fsync_sample";
+                                if(!finalFailure.empty() && !oracleWritebackPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,finalFailure)) break;
+                            } else {
+                                afterSyncRequest=std::move(finalRequest);
+                                afterSyncDonor=nullptr;
+                                for(const auto& item:afterSyncRequest.donors) if(item.bundle==donor.bundle) afterSyncDonor=&item;
+                                if(!afterSyncDonor) { finalReason="donor_missing_after_post_fsync_sample"; break; }
+                                wbFileAfter=refreshedRss; wbSysAfter=*refreshedSystem; afterSyncNow=finalGateTime;
+                                finalReason="fresh_same_registration_control_identity_file_and_budget_verified";
+                                recovered=true; break;
+                            }
+                        }
+                    } catch(const std::exception& e) {
+                        finalReason=std::string("post_fsync_recheck_exception:")+e.what(); break;
+                    }
+                    const double afterCheck=monotonic();
+                    const double sleepSeconds=std::min(0.2,oracleWritebackPostwriteRecheckRemaining(recheckStarted,afterCheck,req.launch));
+                    if(sleepSeconds<=0) {
+                        finalReason=afterCheck>=req.launch?"event_deadline_passed_during_post_fsync_recheck":"post_fsync_freshness_recheck_timeout";
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::duration<double>(sleepSeconds));
+                }
+                const double recheckEnded=monotonic();
+                if(oracleWritebackPostwriteRecheckRemaining(recheckStarted,recheckEnded,req.launch)<=0 && recovered) {
+                    recovered=false;
+                    finalReason=recheckEnded>=req.launch?"event_deadline_passed_before_post_fsync_recheck_completion":"post_fsync_freshness_recheck_timeout";
+                }
+                struct stat finalFileStat{};
+                if(!refreshedFileStat && ::fstat(writebackFile.fd.get(),&finalFileStat)==0) refreshedFileStat=finalFileStat;
+                appendOraclePostFsyncRecheckStage(o,r,recheckStarted,recheckEnded,afterSyncFailure,finalReason,recovered,
+                    refreshedFileStat?&*refreshedFileStat:nullptr,refreshedRss?&*refreshedRss:nullptr,
+                    refreshedSystem?&*refreshedSystem:nullptr);
+                if(!recovered) return finishNoProc("writeback_completed_post_fsync_recheck_halt:"+finalReason);
+            }
+            if(afterSyncNow>=req.launch) return finishNoProc("writeback_completed_after_deadline_no_proc");
+            if(!wbFileAfter || !wbFileAfter->rssFileKiB || !wbFileAfter->rssKiB ||
+               !oracleProcFileWritebackEstimateFits(*wbFileAfter->rssFileKiB,donor.writebackFileSize,nominal)) {
+                return finishNoProc("writeback_completed_file_rss_or_reservation_unknown_no_proc");
+            }
+            const auto gapAfterWriteback=deficit(o,wbSysAfter,forecast,req.needed);
+            const bool budgetStillFits=oracleProcFileWritebackSystemGapFits(gapAfterWriteback,nominal);
+            if(!oracleWritebackMayProceed(syncResult==0,afterSyncNow<req.launch,true,budgetStillFits))
+                return finishNoProc("writeback_completed_current_system_gap_below_reserved_estimate_no_proc");
+            preSample=std::move(wbFileAfter);
+        }
+        if(isProcFileBackend(o.oracleBackend)) {
+            if(o.oracleProfile!="peak_transition_os_snapshot" || !preSample->rssFileKiB || !preSample->rssKiB)
+                throw std::runtime_error("proc_file requires profile and known process VmRSS/RssFile estimate");
+            if(*preSample->rssFileKiB>std::numeric_limits<Bytes>::max()/1024 ||
+                *preSample->rssKiB>std::numeric_limits<Bytes>::max()/1024)
+                throw std::runtime_error("prewrite whole-file estimate byte conversion overflow");
+            const Bytes fileBytes=*preSample->rssFileKiB*1024;
+            const Bytes residentBytes=*preSample->rssKiB*1024;
+            const Bytes keepFloor=std::max(app.keep,512*MiB);
+            if(fileBytes>nominal)
+                throw std::runtime_error("prewrite RssFile exceeds conservatively reserved whole-category estimate");
+            if(residentBytes<fileBytes || residentBytes-fileBytes<keepFloor)
+                throw std::runtime_error("prewrite whole-file estimate violates resident keep reserve");
+            r.preRssFileKiB=*preSample->rssFileKiB;
+            r.preRssTotalKiB=*preSample->rssKiB;
+            r.estimatedRetainedBytes=residentBytes-fileBytes;
+            r.keepReserveBytes=keepFloor;
+            const auto sysBefore=systemSample(o.proc); r.preFree=sysBefore.free; r.preAvailable=sysBefore.available;
+        }
+        r.feedbackSampleStatus="prewrite_identity_verified";
         // Proc sampling is separate from the OS/window/lifecycle evidence
         // refresh. Re-read control and the full current schedule after it, so
         // a slow sample cannot carry stale background authorization to write.
@@ -473,10 +964,10 @@ OracleActionResult performOracleAction(const Options& o,const App& app,const Ora
         const auto finalFailure=oracleBackgroundFailure(o,app,*finalLive,finalFreshnessTime);
         if(!finalFailure.empty()) throw std::runtime_error((oracleFreshnessFailureRetryableImpl(finalFailure)?"oracle_evidence_defer:":"oracle_evidence_reject:")+finalFailure);
         unsigned writeRatio=ratio;
-        if(o.oracleRatioSemantics=="cumulative_anon_watermark") {
+        if(o.oracleRatioSemantics=="cumulative_anon_watermark" && o.oracleBackend=="force_shrink_all") {
             if(!preSample->vmSwapKiB) throw std::runtime_error("prewrite_vmswap_telemetry_missing");
             const Bytes liveResident=preSample->rssAnonKiB*1024;
-            const Bytes prewriteCap=std::min(nominal,sub(liveResident,576*MiB));
+            const Bytes prewriteCap=std::min(nominal,sub(liveResident,o.oracleCumulativeKeep+64*MiB));
             const auto prePlan=oracleCumulativeWatermarkForCap(liveResident,*preSample->vmSwapKiB*1024,prewriteCap,ratio);
             r.ratio=prePlan.ratio;
             r.ratioSemantics=o.oracleRatioSemantics;
@@ -493,31 +984,167 @@ OracleActionResult performOracleAction(const Options& o,const App& app,const Ora
             writeRatio=prePlan.ratio;
         }
         r.ratio=writeRatio;
-        const auto payload=std::to_string(writeRatio);
+        const auto payload=isProcFileBackend(o.oracleBackend)?std::string("1"):std::to_string(writeRatio);
+        System procSysBefore;
+        struct stat procFileStat{};
+        std::optional<OracleRequest> procGateRequest;
+        std::optional<OracleRequest> finalProcRequest;
+        double procGateNow=0;
+        if(o.oracleBackend=="proc_file_writeback") {
+            procSysBefore=systemSample(o.proc);
+            if(::fstat(writebackFile.fd.get(),&procFileStat)!=0) throw error("fstat writeback file before proc_file");
+            appendOracleWritebackStage(o,r,"proc_file_submit_preflight",{}, {},-2,0,&procFileStat,&*preSample,&procSysBefore,"proc_file_not_submitted_stage_ledger_flushed_before_gate");
+            if(monotonic()>=req.launch) return finishNoProc("writeback_completed_deadline_before_proc_stage_ledger");
+            gate=parseControl(readPath(o.control));
+            if(gate.paused || gate.protectedApps.count(app.name) || gate.protectedApps.count(donor.bundle))
+                return finishNoProc("writeback_completed_control_changed_before_proc");
+            procGateRequest.emplace(parseOracleRequest(readPath(o.oracleSchedule)));
+            if(!sameOracleRegistration(req,*procGateRequest)) return finishNoProc("writeback_completed_schedule_changed_before_proc");
+            const OracleDonor* procGateDonor=nullptr;
+            for(const auto& item:procGateRequest->donors) if(item.bundle==donor.bundle) procGateDonor=&item;
+            procGateNow=monotonic();
+            if(!procGateDonor) return finishNoProc("writeback_completed_donor_missing_before_proc");
+            const auto procGateFailure=oracleBackgroundFailure(o,app,*procGateDonor,procGateNow);
+            if(!procGateFailure.empty())
+                return finishNoProc("writeback_completed_identity_or_background_changed_before_proc:"+procGateFailure);
+            verifyOracleWritebackFile(writebackFile,donor,app);
+            const auto lastPreProcSample=sampleOracleRss(*procGateDonor,app);
+            procSysBefore=systemSample(o.proc);
+            if(!lastPreProcSample || !lastPreProcSample->rssFileKiB || !lastPreProcSample->rssKiB ||
+               *lastPreProcSample->rssFileKiB>std::numeric_limits<Bytes>::max()/1024 ||
+               *lastPreProcSample->rssKiB>std::numeric_limits<Bytes>::max()/1024 ||
+               !oracleProcFileWritebackEstimateFits(*lastPreProcSample->rssFileKiB,donor.writebackFileSize,nominal))
+                return finishNoProc("writeback_completed_current_file_estimate_or_reservation_unknown_before_proc");
+            const Bytes lastFileBytes=*lastPreProcSample->rssFileKiB*1024;
+            const Bytes lastResidentBytes=*lastPreProcSample->rssKiB*1024;
+            const Bytes keepFloor=std::max(app.keep,512*MiB);
+            if(lastResidentBytes<lastFileBytes || lastResidentBytes-lastFileBytes<keepFloor ||
+               !oracleProcFileWritebackSystemGapFits(deficit(o,procSysBefore,forecast,req.needed),nominal))
+                return finishNoProc("writeback_completed_current_keep_or_system_budget_gate_before_proc");
+            preSample=lastPreProcSample;
+            finalLive=procGateDonor;
+            r.preRssAnonKiB=preSample->rssAnonKiB; r.preRssFileKiB=*preSample->rssFileKiB; r.preRssTotalKiB=*preSample->rssKiB;
+            r.preFree=procSysBefore.free; r.preAvailable=procSysBefore.available;
+            r.estimatedRetainedBytes=lastResidentBytes-lastFileBytes; r.keepReserveBytes=keepFloor;
+            if(::fstat(writebackFile.fd.get(),&procFileStat)!=0) throw error("fstat writeback file after proc gate");
+            appendOracleWritebackStage(o,r,"proc_file_gate_passed",{}, {},-2,0,&procFileStat,&*preSample,&procSysBefore,"final_identity_and_budget_gate_passed_before_log_flush");
+            if(monotonic()>=req.launch) return finishNoProc("writeback_completed_deadline_after_proc_gate_ledger");
+            gate=parseControl(readPath(o.control));
+            if(gate.paused || gate.protectedApps.count(app.name) || gate.protectedApps.count(donor.bundle))
+                return finishNoProc("writeback_completed_control_changed_after_proc_gate_ledger");
+            controlAtProcWrite=gate; haveControlAtProcWrite=true;
+            finalProcRequest.emplace(parseOracleRequest(readPath(o.oracleSchedule)));
+            if(!sameOracleRegistration(req,*finalProcRequest)) return finishNoProc("writeback_completed_schedule_changed_after_proc_gate_ledger");
+            const OracleDonor* finalProcDonor=nullptr;
+            for(const auto& item:finalProcRequest->donors) if(item.bundle==donor.bundle) finalProcDonor=&item;
+            const double finalProcGateTime=monotonic();
+            if(!finalProcDonor) return finishNoProc("writeback_completed_donor_missing_after_proc_gate_ledger");
+            const auto finalProcFailure=oracleBackgroundFailure(o,app,*finalProcDonor,finalProcGateTime);
+            if(!finalProcFailure.empty())
+                return finishNoProc("writeback_completed_identity_or_background_changed_after_proc_gate_ledger:"+finalProcFailure);
+            verifyOracleWritebackFile(writebackFile,donor,app);
+            const auto finalPreProcSample=sampleOracleRss(*finalProcDonor,app);
+            procSysBefore=systemSample(o.proc);
+            if(!finalPreProcSample || !finalPreProcSample->rssFileKiB || !finalPreProcSample->rssKiB ||
+               *finalPreProcSample->rssFileKiB>std::numeric_limits<Bytes>::max()/1024 ||
+               *finalPreProcSample->rssKiB>std::numeric_limits<Bytes>::max()/1024 ||
+               !oracleProcFileWritebackEstimateFits(*finalPreProcSample->rssFileKiB,donor.writebackFileSize,nominal))
+                return finishNoProc("writeback_completed_final_file_estimate_or_reservation_unknown");
+            const Bytes finalFileBytes=*finalPreProcSample->rssFileKiB*1024;
+            const Bytes finalResidentBytes=*finalPreProcSample->rssKiB*1024;
+            if(finalResidentBytes<finalFileBytes || finalResidentBytes-finalFileBytes<keepFloor ||
+               !oracleProcFileWritebackSystemGapFits(deficit(o,procSysBefore,forecast,req.needed),nominal))
+                return finishNoProc("writeback_completed_final_keep_or_system_budget_gate");
+            preSample=finalPreProcSample; finalLive=finalProcDonor;
+            r.preRssAnonKiB=preSample->rssAnonKiB; r.preRssFileKiB=*preSample->rssFileKiB; r.preRssTotalKiB=*preSample->rssKiB;
+            r.preFree=procSysBefore.free; r.preAvailable=procSysBefore.available;
+        }
+        if(o.oracleBackend=="proc_file_writeback") {
+            verifyOracleWritebackFile(writebackFile,donor,app);
+            gate=parseControl(readPath(o.control));
+            if(gate.paused || gate.protectedApps.count(app.name) || gate.protectedApps.count(donor.bundle))
+                return finishNoProc("writeback_completed_runtime_control_changed_before_proc_syscall");
+            const double identityCheckTime=monotonic();
+            if(identityCheckTime>=req.launch) return finishNoProc("writeback_completed_deadline_at_final_identity_gate_before_proc");
+            if(!finalProcRequest || !finalLive) return finishNoProc("writeback_completed_final_donor_missing_before_proc");
+            const auto finalIdentityFailure=oracleBackgroundFailure(o,app,*finalLive,identityCheckTime);
+            if(!finalIdentityFailure.empty())
+                return finishNoProc("writeback_completed_final_identity_gate_before_proc:"+finalIdentityFailure);
+        }
+        // Capture the last pre-submit exchange snapshot first, then repeat the
+        // existing final authorization checks so this read-only sampling can
+        // never carry a stale deadline or donor authorization into write().
+        const auto swapBefore=sampleOracleSwapGroups(root.get(),app.path);
+        const double finalTelemetryGate=monotonic();
+        if(finalTelemetryGate>=req.launch) throw std::runtime_error("event_deadline_passed_after_pre_action_swap_telemetry");
+        gate=parseControl(readPath(o.control));
+        if(gate.paused || gate.protectedApps.count(app.name) || gate.protectedApps.count(donor.bundle))
+            throw std::runtime_error("runtime_control_changed_after_pre_action_swap_telemetry");
+        const auto telemetryLatest=parseOracleRequest(readPath(o.oracleSchedule));
+        if(!sameOracleRegistration(req,telemetryLatest))
+            throw std::runtime_error("schedule_registration_changed_after_pre_action_swap_telemetry");
+        const OracleDonor* telemetryLive=nullptr;
+        for(const auto& item:telemetryLatest.donors) if(item.bundle==donor.bundle) telemetryLive=&item;
+        if(!telemetryLive) throw std::runtime_error("donor_missing_after_pre_action_swap_telemetry");
+        const auto telemetryFailure=oracleBackgroundFailure(o,app,*telemetryLive,monotonic());
+        if(!telemetryFailure.empty()) throw std::runtime_error("oracle_evidence_reject_after_pre_action_swap_telemetry:"+telemetryFailure);
+        if(o.oracleBackend=="proc_file_writeback") verifyOracleWritebackFile(writebackFile,donor,app);
         const double syscallStart=monotonic();
         if(syscallStart>=req.launch) throw std::runtime_error("event_deadline_passed_at_syscall_start");
         r.syscallStartBoot=syscallStart;
-        writeAttempted=true; errno=0; const auto count=::write(writer.get(),payload.data(),payload.size());
+        writeAttempted=true; r.writeAttempted=true; errno=0; const auto count=::write(writer.get(),payload.data(),payload.size());
         const int writeErrno=count<0?errno:0;
         const double syscallReturn=monotonic();
         r.syscallReturnBoot=syscallReturn;
         r.writeDurationMs=(syscallReturn-syscallStart)*1000.0;
         r.writeOverlapsDeadline=oracleWriteCrossedDeadline(syscallStart,syscallReturn,req.launch);
         r.errorNo=writeErrno; r.writeLength=static_cast<long>(count); r.elapsedMs=(syscallReturn-begin)*1000;
-        writeComplete=count==static_cast<ssize_t>(payload.size());
+        const auto swapAfter=sampleOracleSwapGroups(root.get(),app.path);
+        appendOracleSwapTelemetry(o,r,swapBefore,swapAfter);
+        writeComplete=isProcFileBackend(o.oracleBackend)
+            ?oracleProcFileWriteComplete(static_cast<long>(count),payload.size())
+            :count==static_cast<ssize_t>(payload.size());
+        const auto postSample=sampleOracleRss(*finalLive,app);
+        std::optional<System> procReturnSystem;
+        if(isProcFileBackend(o.oracleBackend)) {
+            try { procReturnSystem=systemSample(o.proc); } catch(const std::exception&) {}
+        }
+        if(o.oracleBackend=="proc_file_writeback") {
+            struct stat returnedFileStat{};
+            const bool returnedFileStatOk=::fstat(writebackFile.fd.get(),&returnedFileStat)==0;
+            appendOracleWritebackStage(o,r,"proc_file_returned",r.syscallStartBoot,r.syscallReturnBoot,
+                static_cast<long>(count),writeErrno,returnedFileStatOk?&returnedFileStat:nullptr,
+                postSample?&*postSample:nullptr,procReturnSystem?&*procReturnSystem:nullptr,
+                count==static_cast<ssize_t>(payload.size())?"proc_file_write_returned_complete":"proc_file_write_returned_error_or_partial_no_retry");
+        }
         if(count!=static_cast<ssize_t>(payload.size())) r.status="write_failed_or_partial_no_retry";
         else {
             r.status="write_accepted_feedback_unknown";
-            if(o.oracleFeedbackDelayMs>0)
-                std::this_thread::sleep_for(std::chrono::milliseconds(o.oracleFeedbackDelayMs));
-            const auto postSample=sampleOracleRss(*finalLive,app);
+            const unsigned delay=o.oracleProfile=="peak_transition_os_snapshot"?0U:o.oracleFeedbackDelayMs;
+            if(delay>0) std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            System procSysAfter; bool haveProcSysAfter=false;
             const auto feedback=compareOracleRssSamples(donor.pid,uintValue(donor.uid),donor.start,preSample,postSample);
             r.feedbackIdentityVerified=feedback.identityVerified;
             if(postSample && feedback.identityVerified) {
                 r.postRssAnonKiB=postSample->rssAnonKiB;
                 r.signedRssDeltaKiB=feedback.signedDeltaKiB;
                 r.feedbackDrop=feedback.dropBytes;
-                if(feedback.positiveDrop) {
+                if(isProcFileBackend(o.oracleBackend)) {
+                    if(procReturnSystem) { procSysAfter=*procReturnSystem; haveProcSysAfter=true; }
+                    r.postFree=procSysAfter.free; r.postAvailable=procSysAfter.available; r.postCached=procSysAfter.cached; r.postDirty=procSysAfter.dirty;
+                    if(!haveProcSysAfter || !oracleProcFileFeedbackMayContinue(true,preSample->rssFileKiB,postSample->rssFileKiB)) {
+                        r.feedbackSampleStatus="postwrite_file_or_system_sample_unknown_halt";
+                    } else {
+                        r.postRssFileKiB=*postSample->rssFileKiB;
+                        r.fileFeedbackPresent=true;
+                        r.signedRssFileDeltaKiB=static_cast<std::int64_t>(*preSample->rssFileKiB)-static_cast<std::int64_t>(*postSample->rssFileKiB);
+                        if(r.signedRssFileDeltaKiB>0) {
+                            r.feedbackDrop=static_cast<Bytes>(r.signedRssFileDeltaKiB)*1024;
+                            r.feedbackSampleStatus="verified_positive_process_rssfile_delta_observation";
+                            r.status="write_accepted_file_feedback_measured_positive_rss_observation";
+                        } else { r.feedbackSampleStatus=r.signedRssFileDeltaKiB==0?"verified_zero_rssfile_delta_halt_unknown_effect":"verified_rssfile_growth_halt_unknown_effect"; r.status="write_accepted_feedback_nonpositive_halt"; }
+                    }
+                } else if(feedback.positiveDrop) {
                     r.feedbackSampleStatus="verified_positive_process_rss_delta_observation";
                     r.status="write_accepted_feedback_measured_positive_rss_observation";
                 } else {
@@ -527,15 +1154,263 @@ OracleActionResult performOracleAction(const Options& o,const App& app,const Ora
             } else {
                 r.feedbackSampleStatus="postwrite_identity_or_rss_sample_unknown_halt";
             }
-            const auto postReq=parseOracleRequest(readPath(o.oracleSchedule));
-            const OracleDonor* postDonor=nullptr; for(const auto& item:postReq.donors) if(item.bundle==donor.bundle) postDonor=&item;
-            if(!sameOracleRegistration(req,postReq) || !postDonor || !freshOracleBackground(o,app,*postDonor,monotonic())) r.status="write_accepted_identity_or_background_changed_postwrite";
+            if(o.oracleBackend=="proc_file_writeback") {
+                struct stat procFileAfter{};
+                const bool procFileStatOk=::fstat(writebackFile.fd.get(),&procFileAfter)==0;
+                appendOracleWritebackStage(o,r,"proc_file_feedback",r.syscallStartBoot,r.syscallReturnBoot,
+                    static_cast<long>(count),writeErrno,procFileStatOk?&procFileAfter:nullptr,postSample?&*postSample:nullptr,
+                    haveProcSysAfter?&procSysAfter:nullptr,r.feedbackSampleStatus);
+            }
+            const double postwriteCheckBoot=monotonic();
+            try {
+                const auto postReq=parseOracleRequest(readPath(o.oracleSchedule));
+                const OracleDonor* postDonor=nullptr; for(const auto& item:postReq.donors) if(item.bundle==donor.bundle) postDonor=&item;
+                std::string postwriteFailure;
+                if(!sameOracleRegistration(req,postReq)) postwriteFailure="schedule_registration_changed";
+                else if(!postDonor) postwriteFailure="donor_missing_from_schedule";
+                else postwriteFailure=oracleBackgroundFailure(o,app,*postDonor,postwriteCheckBoot);
+                // A completed anonymous write may outlive the AA/WMS snapshot.
+                // Wait only for refreshed evidence; never resubmit the write.
+                if(oracleAnonPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,postwriteFailure) &&
+                   r.feedbackIdentityVerified && feedback.positiveDrop && postwriteCheckBoot<req.launch) {
+                    const std::string initialFailure=postwriteFailure;
+                    const double started=postwriteCheckBoot;
+                    bool recovered=false;
+                    while(oracleWritebackPostwriteRecheckRemaining(started,monotonic(),req.launch)>0) {
+                        const auto currentControl=parseControl(readPath(o.control));
+                        if(currentControl.paused || currentControl.protectedApps.count(app.name) ||
+                           currentControl.protectedApps.count(donor.bundle) || currentControl.paused!=gate.paused ||
+                           currentControl.protectedApps!=gate.protectedApps || currentControl.boost!=gate.boost ||
+                           currentControl.until!=gate.until) {
+                            postwriteFailure="runtime_control_changed_during_anon_recheck"; break;
+                        }
+                        const auto freshReq=parseOracleRequest(readPath(o.oracleSchedule));
+                        if(!sameOracleRegistration(req,freshReq)) {
+                            postwriteFailure="schedule_registration_changed_during_anon_recheck"; break;
+                        }
+                        const OracleDonor* freshDonor=nullptr;
+                        for(const auto& item:freshReq.donors) if(item.bundle==donor.bundle) freshDonor=&item;
+                        if(!freshDonor) { postwriteFailure="donor_missing_during_anon_recheck"; break; }
+                        postwriteFailure=oracleBackgroundFailure(o,app,*freshDonor,monotonic());
+                        if(postwriteFailure.empty()) {
+                            const auto freshRss=sampleOracleRss(*freshDonor,app);
+                            const auto freshFeedback=compareOracleRssSamples(donor.pid,uintValue(donor.uid),donor.start,preSample,freshRss);
+                            if(!freshFeedback.identityVerified || !freshFeedback.positiveDrop || !freshRss ||
+                               freshRss->rssAnonKiB<o.oracleCumulativeKeep/1024) {
+                                postwriteFailure="anon_recheck_identity_rss_or_keep_unknown"; break;
+                            }
+                            // Verify the same registration and protection again after sampling.
+                            const auto finalControl=parseControl(readPath(o.control));
+                            const auto finalReq=parseOracleRequest(readPath(o.oracleSchedule));
+                            const OracleDonor* finalDonor=nullptr;
+                            for(const auto& item:finalReq.donors) if(item.bundle==donor.bundle) finalDonor=&item;
+                            if(finalControl.paused || finalControl.protectedApps!=gate.protectedApps ||
+                               finalControl.boost!=gate.boost || finalControl.until!=gate.until ||
+                               !sameOracleRegistration(req,finalReq) || !finalDonor) {
+                                postwriteFailure="registration_or_control_changed_after_anon_recheck_sample"; break;
+                            }
+                            postwriteFailure=oracleBackgroundFailure(o,app,*finalDonor,monotonic());
+                            if(postwriteFailure.empty()) {
+                                if(oracleWritebackPostwriteRecheckRemaining(started,monotonic(),req.launch)<=0) {
+                                    postwriteFailure="anon_recheck_deadline_or_timeout"; break;
+                                }
+                                r.postRssAnonKiB=freshRss->rssAnonKiB;
+                                r.signedRssDeltaKiB=freshFeedback.signedDeltaKiB;
+                                r.feedbackDrop=freshFeedback.dropBytes;
+                                r.aaObserved=finalDonor->aaObserved;
+                                r.windowObserved=finalDonor->windowObserved;
+                                r.procObserved=finalDonor->procObserved;
+                                r.lifecycleObserved=finalDonor->lifecycleObserved;
+                                r.feedbackSampleStatus="verified_positive_process_rss_delta_after_fresh_background_recheck";
+                                recovered=true; break;
+                            }
+                        }
+                        if(!oracleAnonPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,postwriteFailure)) break;
+                        const double recheckSleep=std::min(0.1,oracleWritebackPostwriteRecheckRemaining(started,monotonic(),req.launch));
+                        if(recheckSleep<=0) break;
+                        std::this_thread::sleep_for(std::chrono::duration<double>(recheckSleep));
+                    }
+                    if(!recovered && oracleAnonPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,postwriteFailure))
+                        postwriteFailure="anon_postwrite_freshness_recheck_timeout";
+                    appendOraclePostwriteRecheckStage(o,r,started,monotonic(),initialFailure,postwriteFailure,
+                        recovered,nullptr,nullptr,nullptr);
+                }
+                if(!postwriteFailure.empty()) {
+                    const bool mayRecheck=oracleWritebackPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,postwriteFailure) &&
+                        r.feedbackIdentityVerified && r.fileFeedbackPresent && haveProcSysAfter && postwriteCheckBoot<req.launch;
+                    if(mayRecheck) {
+                        const double recheckStarted=postwriteCheckBoot;
+                        std::string recheckFinalReason=postwriteFailure;
+                        bool recheckRecovered=false;
+                        std::optional<struct stat> recheckFileStat;
+                        std::optional<OracleRssSample> recheckRss;
+                        std::optional<System> recheckSystem;
+                        while(!recheckRecovered) {
+                            const double checkBoot=monotonic();
+                            const double remainingSeconds=oracleWritebackPostwriteRecheckRemaining(recheckStarted,checkBoot,req.launch);
+                            if(remainingSeconds<=0) {
+                                recheckFinalReason=checkBoot>=req.launch?"event_deadline_passed_during_recheck":"postwrite_freshness_recheck_timeout";
+                                break;
+                            }
+                            try {
+                                const auto recheckControl=parseControl(readPath(o.control));
+                                if(recheckControl.paused || recheckControl.protectedApps.count(app.name) || recheckControl.protectedApps.count(donor.bundle)) {
+                                    recheckFinalReason="runtime_control_paused_or_protected_during_recheck";
+                                    break;
+                                }
+                                if(!haveControlAtProcWrite || recheckControl.paused!=controlAtProcWrite.paused ||
+                                   recheckControl.protectedApps!=controlAtProcWrite.protectedApps ||
+                                   recheckControl.boost!=controlAtProcWrite.boost || recheckControl.until!=controlAtProcWrite.until) {
+                                    recheckFinalReason="runtime_control_changed_during_recheck";
+                                    break;
+                                }
+                                const auto recheckReq=parseOracleRequest(readPath(o.oracleSchedule));
+                                if(!sameOracleRegistration(req,recheckReq)) {
+                                    recheckFinalReason="schedule_registration_changed_during_recheck";
+                                    break;
+                                }
+                                const OracleDonor* recheckDonor=nullptr;
+                                for(const auto& item:recheckReq.donors) if(item.bundle==donor.bundle) recheckDonor=&item;
+                                if(!recheckDonor) {
+                                    recheckFinalReason="donor_missing_from_schedule_during_recheck";
+                                    break;
+                                }
+                                verifyOracleWritebackFile(writebackFile,*recheckDonor,app);
+                                const double evidenceBoot=monotonic();
+                                const std::string evidenceFailure=oracleBackgroundFailure(o,app,*recheckDonor,evidenceBoot);
+                                if(!evidenceFailure.empty()) {
+                                    if(oracleWritebackPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,evidenceFailure)) {
+                                        recheckFinalReason=evidenceFailure;
+                                    } else {
+                                        recheckFinalReason="background_or_identity_changed_during_recheck:"+evidenceFailure;
+                                        break;
+                                    }
+                                } else {
+                                    if(monotonic()>=req.launch) {
+                                        recheckFinalReason="event_deadline_passed_before_recheck_feedback_sample";
+                                        break;
+                                    }
+                                    auto freshSample=sampleOracleRss(*recheckDonor,app);
+                                    if(!freshSample) {
+                                        recheckFinalReason="postwrite_recheck_rss_identity_sample_unknown";
+                                        break;
+                                    }
+                                    System freshSystem=systemSample(o.proc);
+                                    verifyOracleWritebackFile(writebackFile,*recheckDonor,app);
+                                    const auto freshFeedback=compareOracleRssSamples(donor.pid,uintValue(donor.uid),donor.start,preSample,freshSample);
+                                    const Bytes keepFloor=std::max(app.keep,512*MiB);
+                                    if(!oracleProcFileRecheckFeedbackMayContinue(freshFeedback.identityVerified,true,
+                                           preSample->rssFileKiB,freshSample->rssFileKiB,freshSample->rssKiB,keepFloor)) {
+                                        recheckFinalReason=!freshFeedback.identityVerified?"postwrite_recheck_process_identity_changed":
+                                            !freshSample->rssFileKiB || !freshSample->rssKiB?"postwrite_recheck_file_or_total_rss_unknown":
+                                            *freshSample->rssKiB<*freshSample->rssFileKiB?"postwrite_recheck_rss_components_invalid":
+                                            (*freshSample->rssKiB-*freshSample->rssFileKiB)<(keepFloor/1024)?"postwrite_recheck_keep_reserve_failed":
+                                            "postwrite_recheck_file_rss_not_decreased";
+                                        recheckRss=std::move(freshSample);
+                                        recheckSystem=freshSystem;
+                                        struct stat currentFile{};
+                                        if(::fstat(writebackFile.fd.get(),&currentFile)==0) recheckFileStat=currentFile;
+                                        break;
+                                    }
+                                    const auto freshAfterEvidence=parseOracleRequest(readPath(o.oracleSchedule));
+                                    if(!sameOracleRegistration(req,freshAfterEvidence)) {
+                                        recheckFinalReason="schedule_registration_changed_after_recheck_sample";
+                                        break;
+                                    }
+                                    const auto finalControl=parseControl(readPath(o.control));
+                                    if(finalControl.paused || finalControl.protectedApps.count(app.name) || finalControl.protectedApps.count(donor.bundle) ||
+                                       finalControl.paused!=controlAtProcWrite.paused || finalControl.protectedApps!=controlAtProcWrite.protectedApps ||
+                                       finalControl.boost!=controlAtProcWrite.boost || finalControl.until!=controlAtProcWrite.until) {
+                                        recheckFinalReason="runtime_control_changed_after_recheck_sample";
+                                        break;
+                                    }
+                                    const OracleDonor* finalDonor=nullptr;
+                                    for(const auto& item:freshAfterEvidence.donors) if(item.bundle==donor.bundle) finalDonor=&item;
+                                    if(!finalDonor) {
+                                        recheckFinalReason="donor_missing_after_recheck_sample";
+                                        break;
+                                    }
+                                    const std::string postSampleBackgroundFailure=oracleBackgroundFailure(o,app,*finalDonor,monotonic());
+                                    if(!postSampleBackgroundFailure.empty()) {
+                                        if(oracleWritebackPostwriteRecheckEligible(req.schemaVersion,o.oracleProfile,o.oracleBackend,postSampleBackgroundFailure)) {
+                                            recheckFinalReason=postSampleBackgroundFailure;
+                                        } else {
+                                            recheckFinalReason="background_or_identity_changed_after_recheck_sample:"+postSampleBackgroundFailure;
+                                            break;
+                                        }
+                                    } else {
+                                        recheckRss=std::move(freshSample);
+                                        recheckSystem=freshSystem;
+                                        struct stat currentFile{};
+                                        if(::fstat(writebackFile.fd.get(),&currentFile)==0) recheckFileStat=currentFile;
+                                        r.feedbackIdentityVerified=true;
+                                        r.postRssAnonKiB=recheckRss->rssAnonKiB;
+                                        r.postRssFileKiB=*recheckRss->rssFileKiB;
+                                        r.postRssTotalKiB=*recheckRss->rssKiB;
+                                        r.signedRssDeltaKiB=freshFeedback.signedDeltaKiB;
+                                        r.signedRssFileDeltaKiB=static_cast<std::int64_t>(*preSample->rssFileKiB)-static_cast<std::int64_t>(*recheckRss->rssFileKiB);
+                                        r.feedbackDrop=static_cast<Bytes>(r.signedRssFileDeltaKiB)*1024;
+                                        r.fileFeedbackPresent=true;
+                                        r.keepReserveBytes=keepFloor;
+                                        r.postFree=recheckSystem->free; r.postAvailable=recheckSystem->available;
+                                        r.postCached=recheckSystem->cached; r.postDirty=recheckSystem->dirty;
+                                        r.feedbackSampleStatus="postwrite_recheck_recovered_after_"+postwriteFailure;
+                                        r.status="write_accepted_file_feedback_measured_positive_rss_observation";
+                                        recheckFinalReason="fresh_same_registration_identity_background_and_file_feedback_verified";
+                                        recheckRecovered=true;
+                                        break;
+                                    }
+                                }
+                            } catch(const std::exception& e) {
+                                recheckFinalReason=std::string("postwrite_recheck_exception:")+e.what();
+                                break;
+                            }
+                            const double afterCheck=monotonic();
+                            const double sleepSeconds=std::min(0.2,oracleWritebackPostwriteRecheckRemaining(recheckStarted,afterCheck,req.launch));
+                            if(sleepSeconds<=0) {
+                                recheckFinalReason=afterCheck>=req.launch?"event_deadline_passed_during_recheck":"postwrite_freshness_recheck_timeout";
+                                break;
+                            }
+                            std::this_thread::sleep_for(std::chrono::duration<double>(sleepSeconds));
+                        }
+                        const double recheckEnded=monotonic();
+                        if(oracleWritebackPostwriteRecheckRemaining(recheckStarted,recheckEnded,req.launch)<=0 && recheckRecovered) {
+                            recheckRecovered=false;
+                            recheckFinalReason=recheckEnded>=req.launch?"event_deadline_passed_before_recheck_completion":
+                                "postwrite_freshness_recheck_timeout";
+                            r.status="write_accepted_postwrite_recheck_halt:"+recheckFinalReason;
+                        } else if(!recheckRecovered) {
+                            r.status="write_accepted_postwrite_recheck_halt:"+recheckFinalReason;
+                            r.feedbackSampleStatus="postwrite_recheck_initial="+postwriteFailure+";final="+recheckFinalReason;
+                        }
+                        struct stat currentFile{};
+                        if(!recheckFileStat && ::fstat(writebackFile.fd.get(),&currentFile)==0) recheckFileStat=currentFile;
+                        appendOraclePostwriteRecheckStage(o,r,recheckStarted,recheckEnded,postwriteFailure,recheckFinalReason,
+                            recheckRecovered,recheckFileStat?&*recheckFileStat:nullptr,recheckRss?&*recheckRss:nullptr,
+                            recheckSystem?&*recheckSystem:nullptr);
+                    } else {
+                        const std::string detail="postwrite_check_boottime_s="+std::to_string(postwriteCheckBoot)+":"+postwriteFailure;
+                        r.feedbackSampleStatus=detail;
+                        r.status="write_accepted_postwrite_identity_or_background_failure:"+postwriteFailure;
+                    }
+                }
+            } catch(const std::exception& e) {
+                const std::string detail="postwrite_check_boottime_s="+std::to_string(postwriteCheckBoot)+":schedule_check_exception:"+e.what();
+                r.feedbackSampleStatus=detail;
+                r.status=std::string("write_accepted_postwrite_schedule_check_exception:")+e.what();
+            }
             const double feedbackComplete=monotonic();
             r.feedbackCompleteBoot=feedbackComplete;
             r.feedbackOverlapsDeadline=oracleFeedbackCrossedDeadline(feedbackComplete,req.launch);
         }
     } catch(const std::exception& e) {
-        if(writeAttempted) r.status=writeComplete?"write_accepted_feedback_unknown_after_exception":"write_failed_or_partial_no_retry";
+        if(writeAttempted) {
+            if(writeComplete) {
+                r.status=std::string("write_accepted_feedback_unknown_after_exception:")+e.what();
+                if(r.feedbackSampleStatus.empty()) r.feedbackSampleStatus=std::string("postwrite_exception:")+e.what();
+            } else r.status=std::string("write_failed_or_partial_no_retry:")+e.what();
+        }
+        else if(r.writebackAttempted) r.status=std::string("writeback_submitted_no_proc_after_exception:")+e.what();
         else { const std::string reason=e.what(); r.status=reason.rfind("oracle_evidence_defer:",0)==0?std::string("rejected:")+reason:std::string("rejected:")+reason; r.errorNo=errno; }
         if(writeAttempted) {
             try { const double feedbackComplete=monotonic(); r.feedbackCompleteBoot=feedbackComplete; r.feedbackOverlapsDeadline=oracleFeedbackCrossedDeadline(feedbackComplete,req.launch); }
@@ -567,6 +1442,18 @@ void appendOracleLedger(const Options& o,const OracleActionResult& r) {
     if(fresh) out<<header<<'\n';
     out<<csvCell(r.actionId)<<','<<csvCell(r.eventId)<<','<<csvCell(r.caseId)<<','<<csvCell(r.bundle)<<','<<r.pid<<','<<csvCell(r.uid)<<','<<r.start<<','<<std::setprecision(12)<<r.deadline<<','<<r.needed<<','<<r.remaining<<','<<r.input<<','<<r.preRssAnonKiB<<','<<r.postRssAnonKiB<<','<<r.signedRssDeltaKiB<<','<<r.feedbackDrop<<','<<(r.feedbackIdentityVerified?"true":"false")<<','<<csvCell(r.feedbackSampleStatus)<<','<<r.ratio<<','<<r.nominal<<','<<r.writeLength<<','<<r.errorNo<<','<<r.elapsedMs<<','<<csvCell(r.status)<<','<<(r.overlap?"true":"false")<<','<<csvCell(r.evidenceSource)<<','<<r.aaObserved<<','<<r.windowObserved<<','<<r.procObserved<<','<<r.lifecycleObserved<<'\n';
     out.flush(); if(!out) throw std::runtime_error("oracle ledger write failed");
+
+    if(r.backend=="proc_file" && !r.actionId.empty()) {
+        const fs::path filePath=o.oracleLedger+".proc_file_v1.csv";
+        static const std::string fileHeader="action_id,event_id,case_id,bundle,pid,uid,start_ticks,backend,request_bytes,estimated_rssfile_bytes,write_length,errno,syscall_start_boottime_s,syscall_return_boottime_s,pre_vmrss_kib,pre_rssfile_kib,post_rssfile_kib,estimated_retained_rss_bytes,keep_reserve_bytes,signed_rssfile_delta_kib,pre_rssanon_kib,post_rssanon_kib,pre_memfree_bytes,post_memfree_bytes,pre_memavailable_bytes,post_memavailable_bytes,status";
+        const bool fileFresh=!fs::exists(filePath) || fs::file_size(filePath)==0;
+        if(!fileFresh) { std::ifstream prior(filePath); std::string h; if(!std::getline(prior,h) || h!=fileHeader) throw std::runtime_error("proc_file V1 ledger schema mismatch"); }
+        std::ofstream fileOut(filePath,std::ios::app); if(!fileOut) throw std::runtime_error("cannot append proc_file ledger");
+        if(fileFresh) fileOut<<fileHeader<<'\n';
+        auto opt=[](const std::optional<double>& value) { return value?std::to_string(*value):std::string{}; };
+        fileOut<<csvCell(r.actionId)<<','<<csvCell(r.eventId)<<','<<csvCell(r.caseId)<<','<<csvCell(r.bundle)<<','<<r.pid<<','<<csvCell(r.uid)<<','<<r.start<<",proc_file,null,"<<r.nominal<<','<<(r.writeAttempted?std::to_string(r.writeLength):std::string{})<<','<<(r.writeAttempted?std::to_string(r.errorNo):std::string{})<<','<<opt(r.syscallStartBoot)<<','<<opt(r.syscallReturnBoot)<<','<<r.preRssTotalKiB<<','<<r.preRssFileKiB<<','<<r.postRssFileKiB<<','<<r.estimatedRetainedBytes<<','<<r.keepReserveBytes<<','<<r.signedRssFileDeltaKiB<<','<<r.preRssAnonKiB<<','<<r.postRssAnonKiB<<','<<r.preFree<<','<<r.postFree<<','<<r.preAvailable<<','<<r.postAvailable<<','<<csvCell(r.status)<<'\n';
+        fileOut.flush(); if(!fileOut) throw std::runtime_error("proc_file ledger write failed");
+    }
 
     if(r.ratioSemantics=="cumulative_anon_watermark") {
         const fs::path watermarkPath=o.oracleLedger+".watermark_v1.csv";
@@ -606,6 +1493,50 @@ void event(CSV& log, const std::string& level, const std::string& name, const st
     std::cerr << level << " " << name << " " << message << '\n';
 }
 } // namespace
+
+OracleSwapTelemetryRead readOracleSwapTelemetryNode(int groupFd,const std::string& node,std::size_t limit) {
+    if(node!="memory.eswap_info" && node!="memory.zswap_info")
+        throw std::runtime_error("unsupported swap telemetry node");
+    limit=std::min<std::size_t>(limit,4096);
+    OracleSwapTelemetryRead result;
+    result.startedBoottime=monotonic();
+    FD fd(::openat(groupFd,node.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW));
+    if(fd.get()<0) {
+        result.errorNumber=errno;
+        result.status=errno==ENOENT?"missing":"open_error";
+        result.endedBoottime=monotonic();
+        return result;
+    }
+    char buffer[1024];
+    bool truncated=false;
+    for(;;) {
+        const auto room=result.raw.size()<limit?limit-result.raw.size():0;
+        const auto readLimit=std::min<std::size_t>(sizeof(buffer),room+1);
+        const auto n=::read(fd.get(),buffer,readLimit);
+        if(n==0) break;
+        if(n<0) {
+            if(errno==EINTR) continue;
+            result.errorNumber=errno; result.status="read_error"; result.raw.clear();
+            result.endedBoottime=monotonic(); return result;
+        }
+        const auto count=static_cast<std::size_t>(n);
+        const auto keep=std::min(room,count);
+        result.raw.append(buffer,keep);
+        if(keep<count) { truncated=true; break; }
+    }
+    result.status=truncated?"truncated":"ok";
+    result.endedBoottime=monotonic();
+    return result;
+}
+
+std::string oracleSwapTelemetryCsvRow(const std::vector<std::string>& fields) {
+    std::string line;
+    for(const auto& field:fields) {
+        if(!line.empty()) line+=',';
+        line+=csvCell(field);
+    }
+    return line;
+}
 
 std::string oracleFreshnessFailure(bool structuralEvidenceValid,double now,
     const std::vector<std::pair<std::string,double>>& observations,double maxAgeSeconds) {
@@ -704,7 +1635,7 @@ std::optional<OracleRssSample> parseOracleRssSample(std::uint64_t pid,
         // parseKiBFields keeps the proc status integer in kB. Preserve that
         // unit for signed subtraction; compareOracleRssSamples converts only
         // a positive observed drop to bytes.
-        return OracleRssSample{pid,expectedUid,expectedStartTicks,*memory.rssAnonKiB,memory.vmSwapKiB};
+        return OracleRssSample{pid,expectedUid,expectedStartTicks,*memory.rssAnonKiB,memory.vmSwapKiB,memory.rssFileKiB,memory.rssKiB};
     } catch(const std::exception&) { return {}; }
 }
 
@@ -733,7 +1664,8 @@ OracleRssFeedback compareOracleRssSamples(std::uint64_t expectedPid,
 
 bool oracleFeedbackMayContinue(const std::string& status,bool identityVerified,
     std::int64_t signedDeltaKiB,bool postSamplePresent) {
-    return status=="write_accepted_feedback_measured_positive_rss_observation" &&
+    return (status=="write_accepted_feedback_measured_positive_rss_observation" ||
+        status=="write_accepted_file_feedback_measured_positive_rss_observation") &&
         identityVerified && signedDeltaKiB>0 && postSamplePresent;
 }
 
@@ -843,6 +1775,138 @@ bool oracleRatioCanAdvance(unsigned priorSuccessfulRatio,unsigned candidateRatio
     return candidateRatio>0 && candidateRatio>priorSuccessfulRatio;
 }
 
+Bytes oracleProcFileReservation(Bytes estimatedRssFileBytes,Bytes estimatedResidentBytes,
+    Bytes keepReserve,Bytes eventGap,Bytes batchCap,
+    Bytes globalRoom,Bytes caseRoom,Bytes appRoom,Bytes safetyMargin,Bytes minBatch) {
+    if(estimatedRssFileBytes==0 || estimatedRssFileBytes<minBatch ||
+        estimatedResidentBytes<estimatedRssFileBytes ||
+        estimatedResidentBytes-estimatedRssFileBytes<keepReserve) return 0;
+    const Bytes cap=sub(std::min({eventGap,batchCap,globalRoom,caseRoom,appRoom}),safetyMargin);
+    return estimatedRssFileBytes<=cap?estimatedRssFileBytes:0;
+}
+Bytes oracleProcFileWritebackReservation(Bytes estimatedRssFileBytes,Bytes registeredFileSize,
+    Bytes estimatedResidentBytes,Bytes keepReserve,Bytes eventGap,Bytes batchCap,
+    Bytes globalRoom,Bytes caseRoom,Bytes appRoom,Bytes safetyMargin,Bytes minBatch) {
+    if(estimatedRssFileBytes==0 || registeredFileSize==0 || estimatedResidentBytes<estimatedRssFileBytes ||
+       estimatedResidentBytes-estimatedRssFileBytes<keepReserve) return 0;
+    const Bytes work=std::max(estimatedRssFileBytes,registeredFileSize);
+    if(work<minBatch) return 0;
+    const Bytes reserved=add(work,safetyMargin);
+    if(reserved==Unlimited) return 0;
+    const Bytes cap=std::min({eventGap,batchCap,globalRoom,caseRoom,appRoom});
+    return reserved<=cap?reserved:0;
+}
+bool oracleProcFileWritebackEstimateFits(Bytes currentRssFileKiB,Bytes registeredFileSizeBytes,Bytes reservedBytes) {
+    if(currentRssFileKiB==0 || registeredFileSizeBytes==0 || reservedBytes==0 ||
+       currentRssFileKiB>std::numeric_limits<Bytes>::max()/1024) return false;
+    return currentRssFileKiB*1024<=reservedBytes && registeredFileSizeBytes<=reservedBytes;
+}
+bool oracleProcFileWritebackSystemGapFits(Bytes currentGapBytes,Bytes reservedBytes) {
+    return reservedBytes>0 && currentGapBytes>=reservedBytes;
+}
+
+bool oracleProfileTargetMaySubmit(bool alreadySubmitted,bool identityComplete) {
+    return !alreadySubmitted && identityComplete;
+}
+bool oracleProfileDonorCooldownScope(unsigned schemaVersion,const std::string& profile,
+    const std::string& backend) {
+    return schemaVersion==3 && profile=="peak_transition_os_snapshot" &&
+        backend=="proc_file_writeback";
+}
+bool oracleProfileCooldownMayContinue(unsigned schemaVersion,const std::string& profile,
+    const std::string& backend,bool identityComplete) {
+    return oracleProfileDonorCooldownScope(schemaVersion,profile,backend) && identityComplete;
+}
+bool oraclePrecommitMemberWaitWindowOpen(bool waitStarted,double waitStart,double now,double launchDeadline) {
+    if(!std::isfinite(now) || !std::isfinite(launchDeadline) || now>=launchDeadline) return false;
+    if(!waitStarted) return true;
+    return std::isfinite(waitStart) && waitStart>0 && now>=waitStart && now<waitStart+2.0;
+}
+OraclePrecommitMemberRetryAction oraclePrecommitMemberRetryAction(bool profileScope,
+    bool readOk,bool parseValid,std::size_t entryCount,std::uint64_t solePid,
+    std::uint64_t expectedPid,bool waitStarted,double waitStart,double now,double launchDeadline) {
+    if(!profileScope) return OraclePrecommitMemberRetryAction::NotApplicable;
+    if(!readOk || !parseValid || !oraclePrecommitMemberWaitWindowOpen(waitStarted,waitStart,now,launchDeadline))
+        return OraclePrecommitMemberRetryAction::Stop;
+    if(entryCount==1) {
+        if(solePid!=expectedPid) return OraclePrecommitMemberRetryAction::Stop;
+        return waitStarted?OraclePrecommitMemberRetryAction::Recovered:OraclePrecommitMemberRetryAction::NotApplicable;
+    }
+    return OraclePrecommitMemberRetryAction::Wait;
+}
+bool oracleWritebackMayProceed(bool fdatasyncSucceeded,bool beforeDeadline,
+    bool identityAndBackgroundVerified,bool budgetStillFits) {
+    return fdatasyncSucceeded && beforeDeadline && identityAndBackgroundVerified && budgetStillFits;
+}
+bool oracleScheduleCompatible(const std::string& profile,const std::string& backend,unsigned schemaVersion) {
+    if(profile=="peak_transition_os_snapshot")
+        return backend=="proc_file_writeback"?schemaVersion==3:schemaVersion==2;
+    return profile=="legacy_two_donor" && backend=="force_shrink_all" && schemaVersion==1;
+}
+
+bool oracleAppMatchesDonor(const std::string& oracleProfile,const std::string& appName,
+    const std::string& appLeaf,const std::string& bundle,const std::string& uid) {
+    if(appLeaf!=bundle+"_"+uid) return false;
+    return oracleProfile!="peak_transition_os_snapshot" || appName==bundle;
+}
+
+bool oracleProcFileWriteComplete(long writeLength,std::size_t payloadLength) {
+    return writeLength>=0 && static_cast<std::uint64_t>(writeLength)==payloadLength;
+}
+
+bool oracleProcFileFeedbackMayContinue(bool identityVerified,
+    const std::optional<Bytes>& preRssFileKiB,const std::optional<Bytes>& postRssFileKiB) {
+    return identityVerified && preRssFileKiB && postRssFileKiB &&
+        *preRssFileKiB>*postRssFileKiB &&
+        *preRssFileKiB<=static_cast<Bytes>(std::numeric_limits<std::int64_t>::max()) &&
+        *postRssFileKiB<=static_cast<Bytes>(std::numeric_limits<std::int64_t>::max());
+}
+bool oracleWritebackPostwriteRecheckEligible(unsigned schemaVersion,
+    const std::string& profile,const std::string& backend,const std::string& freshnessFailure) {
+    if(schemaVersion!=3 || profile!="peak_transition_os_snapshot" || backend!="proc_file_writeback") return false;
+    return freshnessFailure=="aa_evidence_stale" || freshnessFailure=="window_evidence_stale" ||
+        freshnessFailure=="proc_evidence_stale" || freshnessFailure=="lifecycle_evidence_stale";
+}
+bool oracleAnonPostwriteRecheckEligible(unsigned schemaVersion,
+    const std::string& profile,const std::string& backend,const std::string& freshnessFailure) {
+    if(schemaVersion!=2 || profile!="peak_transition_os_snapshot" || backend!="force_shrink_all") return false;
+    return freshnessFailure=="aa_evidence_stale" || freshnessFailure=="window_evidence_stale" ||
+        freshnessFailure=="proc_evidence_stale" || freshnessFailure=="lifecycle_evidence_stale";
+}
+bool oracleWritebackPreProcRecheckMayResume(unsigned schemaVersion,
+    const std::string& profile,const std::string& backend,const std::string& initialFailure,
+    const std::string& finalFailure,bool registrationStable,bool controlStable,
+    bool fileIdentityVerified,bool rssKeepFits,bool systemReservationFits,bool beforeDeadline) {
+    return oracleWritebackPostwriteRecheckEligible(schemaVersion,profile,backend,initialFailure) &&
+        finalFailure.empty() && registrationStable && controlStable && fileIdentityVerified &&
+        rssKeepFits && systemReservationFits && beforeDeadline;
+}
+double oracleWritebackPostwriteRecheckRemaining(double startedBoottime,
+    double nowBoottime,double eventDeadlineBoottime) {
+    if(!std::isfinite(startedBoottime) || !std::isfinite(nowBoottime) ||
+       !std::isfinite(eventDeadlineBoottime) || startedBoottime<=0 || nowBoottime<startedBoottime ||
+       eventDeadlineBoottime<=nowBoottime) return 0;
+    return std::max(0.0,std::min(startedBoottime+2.0,eventDeadlineBoottime)-nowBoottime);
+}
+bool oracleProcFileRecheckFeedbackMayContinue(bool identityVerified,bool systemSamplePresent,
+    const std::optional<Bytes>& preRssFileKiB,const std::optional<Bytes>& postRssFileKiB,
+    const std::optional<Bytes>& postRssTotalKiB,Bytes keepReserveBytes) {
+    if(!identityVerified || !systemSamplePresent || !postRssTotalKiB || !postRssFileKiB ||
+       *postRssTotalKiB<*postRssFileKiB || !oracleProcFileFeedbackMayContinue(true,preRssFileKiB,postRssFileKiB)) return false;
+    const Bytes retainedKiB=*postRssTotalKiB-*postRssFileKiB;
+    const Bytes keepKiB=keepReserveBytes/1024+(keepReserveBytes%1024?1:0);
+    return retainedKiB>=keepKiB;
+}
+bool oracleProfileRunsFullObservation(bool profileEnabled,bool eventActive,bool observationDue) {
+    return !profileEnabled || !eventActive || observationDue;
+}
+unsigned oracleLoopIntervalMs(bool profileEnabled,bool eventActive,unsigned profilePollMs,unsigned normalIntervalMs) {
+    return profileEnabled && eventActive?profilePollMs:normalIntervalMs;
+}
+bool oracleMayReserveAction(bool workerInFlight,double now,double lastSubmit,double minInterval,double launch) {
+    return !workerInFlight && now<launch && now-lastSubmit>=minInterval;
+}
+
 int run(const Configuration& config,const std::string& backend,bool check,bool apply,Bytes ticks,const std::function<bool()>& stopping) {
     const auto& options=config.options;
     const bool ratioProfile=apply && !options.oracleMode;
@@ -875,12 +1939,24 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
             std::size_t selfDonors=0;
             for(const auto& app:config.apps) if(app.reclaim) {
                 const auto slash=app.path.find_last_of('/'); const auto leaf=slash==std::string::npos?app.path:app.path.substr(slash+1);
-                const bool a1=leaf.rfind("io.memscene.scene4.workload.a1_",0)==0;
-                const bool a2=leaf.rfind("io.memscene.scene4.workload.a2_",0)==0;
-                if(!a1 && !a2) throw std::runtime_error("oracle mode may reclaim only exact scene4 self-donor a1/a2 bundle leaves");
+                bool allowed=false;
+                for(unsigned i=1;i<=(options.oracleProfile=="peak_transition_os_snapshot"?8U:2U);++i) {
+                    const std::string bundle="io.memscene.scene4.workload.a"+std::to_string(i);
+                    const bool appNameAllowed=options.oracleProfile!="peak_transition_os_snapshot" || app.name==bundle;
+                    if(leaf.rfind(bundle+"_",0)==0 && appNameAllowed) allowed=true;
+                }
+                if(!allowed) throw std::runtime_error("oracle mode may reclaim only exact configured scene4 self-donor leaves");
                 ++selfDonors;
             }
-            if(selfDonors!=2) throw std::runtime_error("oracle mode requires exactly two reclaim-enabled scene4 self-donors");
+            if(selfDonors<1 || selfDonors>(options.oracleProfile=="peak_transition_os_snapshot"?8U:2U) ||
+                (options.oracleProfile!="peak_transition_os_snapshot" && selfDonors!=2))
+                throw std::runtime_error("oracle mode requires 2 legacy or 1..8 explicitly allowlisted profile donors");
+            if(options.oracleProfile=="peak_transition_os_snapshot" && !options.oracleBackendExplicit)
+                throw std::runtime_error("peak_transition_os_snapshot requires an explicit oracle_backend choice");
+            if(isProcFileBackend(options.oracleBackend) && options.oracleProfile!="peak_transition_os_snapshot")
+                throw std::runtime_error("proc_file backends are restricted to the explicit peak_transition_os_snapshot profile");
+            if(isProcFileBackend(options.oracleBackend) && options.oracleRatioSemantics!="resident_incremental")
+                throw std::runtime_error("proc_file backends do not use anonymous ratio/watermark semantics");
             if(options.oracleSchedule==options.oracleLedger) throw std::runtime_error("oracle schedule and action ledger must be separate files");
         }
     }
@@ -949,18 +2025,25 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
     std::vector<RollingLimit> appProbeMinute(config.apps.size());
     const double daemonStart=monotonic();
     std::vector<Bytes> lastFeedbackAnonKiB(config.apps.size(),0);
+    std::vector<Bytes> lastFeedbackFileKiB(config.apps.size(),0);
     std::vector<bool> haveFeedback(config.apps.size(),false);
+    std::vector<bool> oracleFeedbackFileCategory(config.apps.size(),false);
+    std::vector<bool> oracleFeedbackDonorCooldownOnly(config.apps.size(),false);
     bool actionThisTick=false;
     std::string tickDecision=ratioProfile?"ratio_profile_idle":"observation_only",tickTarget;
     Bytes tickBudget=0;
     auto deadline=std::chrono::steady_clock::now();
+    auto nextFullObservation=std::chrono::steady_clock::now();
+    bool oracleFastPollActive=false;
     int samplingErrors=0;
     std::optional<std::future<OracleActionResult>> oracleAction;
     std::map<std::string,std::string> oracleFingerprints;
     std::set<std::string> oracleHaltedEvents, oracleExpiredEvents, oracleUnknownDeadlineRows;
+    std::set<std::string> oracleSubmittedTargets;
     std::map<std::string,unsigned> oracleNextDonor;
     std::map<std::string,unsigned> oraclePositiveRatioByEventDonor;
     std::map<std::string,double> oracleDonorBlockedUntil;
+    std::map<std::string,double> oraclePrecommitMemberWaitStart;
     std::map<std::string,std::string> oracleActiveEventForDonor;
     std::map<std::string,std::pair<std::uint64_t,std::uint64_t>> oracleActiveIdentityForDonor;
     RollingLimit oracleGlobalLimit;
@@ -969,18 +2052,32 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
     double oracleActionDeadline=0;
     std::string oracleActionEvent,oracleActionId;
     while(!stopping() && (!ticks || tick<ticks)) {
+        const auto iterationStart=std::chrono::steady_clock::now();
+        const bool fullObservationTick=oracleProfileRunsFullObservation(
+            options.oracleProfile=="peak_transition_os_snapshot",oracleFastPollActive,
+            iterationStart>=nextFullObservation);
         if(oracleAction && oracleAction->wait_for(std::chrono::milliseconds(0))==std::future_status::ready) {
             try { const auto result=oracleAction->get(); appendOracleLedger(options,result); event(eventLog,"INFO",result.bundle,"oracle action_id="+result.actionId+" status="+result.status+" nominal_bytes="+std::to_string(result.nominal)+" overlap="+(result.overlap?"true":"false"));
+                if(options.oracleProfile=="peak_transition_os_snapshot" && isProcFileBackend(options.oracleBackend) && (result.writeAttempted || result.writebackAttempted))
+                    oracleSubmittedTargets.insert(result.eventId+"|"+result.bundle);
                 if(oracleFeedbackMayContinue(result.status,result.feedbackIdentityVerified,
-                       result.signedRssDeltaKiB,result.postRssAnonKiB!=0)) {
+                       isProcFileBackend(result.backend)?result.signedRssFileDeltaKiB:result.signedRssDeltaKiB,
+                       isProcFileBackend(result.backend)?result.fileFeedbackPresent:result.postRssAnonKiB!=0)) {
                     const std::string ratioKey=result.eventId+"|"+result.bundle;
-                    auto& priorRatio=oraclePositiveRatioByEventDonor[ratioKey];
-                    priorRatio=std::max(priorRatio,result.ratio);
+                    if(!isProcFileBackend(result.backend)) {
+                        auto& priorRatio=oraclePositiveRatioByEventDonor[ratioKey];
+                        priorRatio=std::max(priorRatio,result.ratio);
+                    }
                     for(std::size_t i=0;i<config.apps.size();++i) {
                         const auto slash=config.apps[i].path.find_last_of('/');
                         const auto leaf=slash==std::string::npos?config.apps[i].path:config.apps[i].path.substr(slash+1);
                         if(leaf!=result.bundle+"_"+result.uid) continue;
-                        lastFeedbackAnonKiB[i]=result.postRssAnonKiB; haveFeedback[i]=true; oracleActiveEventForDonor[config.apps[i].name]=result.eventId; oracleActiveIdentityForDonor[config.apps[i].name]={result.pid,result.start}; break;
+                        lastFeedbackAnonKiB[i]=result.postRssAnonKiB;
+                        lastFeedbackFileKiB[i]=result.postRssFileKiB;
+                        oracleFeedbackFileCategory[i]=isProcFileBackend(result.backend);
+                        oracleFeedbackDonorCooldownOnly[i]=oracleProfileCooldownMayContinue(
+                            result.schemaVersion,options.oracleProfile,result.backend,result.feedbackIdentityVerified);
+                        haveFeedback[i]=true; oracleActiveEventForDonor[config.apps[i].name]=result.eventId; oracleActiveIdentityForDonor[config.apps[i].name]={result.pid,result.start}; break;
                     }
                 } else if(result.status.rfind("rejected:oracle_evidence_defer:",0)==0 && !result.overlap) {
                     for(const auto& app:config.apps) {
@@ -988,10 +2085,11 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                         const auto leaf=slash==std::string::npos?app.path:app.path.substr(slash+1);
                         if(leaf==result.bundle+"_"+result.uid) { oracleDonorBlockedUntil[app.name]=monotonic()+0.5; break; }
                     }
-                    for(std::size_t i=0;i<2;++i) {
-                        const std::string bundle=i==0?"io.memscene.scene4.workload.a1":"io.memscene.scene4.workload.a2";
-                        if(result.bundle==bundle) { oracleNextDonor[result.eventId]=static_cast<unsigned>(i); break; }
-                    }
+                    try { const auto request=parseOracleRequest(readPath(options.oracleSchedule));
+                        for(std::size_t i=0;i<request.donors.size();++i) if(result.bundle==request.donors[i].bundle) {
+                            oracleNextDonor[result.eventId]=static_cast<unsigned>((i+1)%request.donors.size()); break;
+                        }
+                    } catch(...) { oracleHaltedEvents.insert(result.eventId); }
                     event(eventLog,"WARN",result.bundle,"oracle action deferred without write: "+result.status);
                 } else oracleHaltedEvents.insert(result.eventId);
                 if(result.overlap) oracleHaltedEvents.insert(result.eventId);
@@ -1000,8 +2098,10 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
             oracleAction.reset();
         }
         if(oracleAction && monotonic()>=oracleActionDeadline && !oracleUnknownDeadlineRows.count(oracleActionId)) {
-            OracleActionResult r; r.actionId=oracleActionId; r.eventId=oracleActionEvent; r.deadline=oracleActionDeadline; r.status="reserved_action_still_inflight_at_deadline_unknown"; r.overlap=true; appendOracleLedger(options,r); oracleUnknownDeadlineRows.insert(oracleActionId); oracleHaltedEvents.insert(oracleActionEvent);
+            OracleActionResult r; r.actionId=oracleActionId; r.eventId=oracleActionEvent; r.deadline=oracleActionDeadline; r.backend=options.oracleBackend; r.status="reserved_action_still_inflight_at_deadline_unknown"; r.overlap=true; appendOracleLedger(options,r); oracleUnknownDeadlineRows.insert(oracleActionId); oracleHaltedEvents.insert(oracleActionEvent);
         }
+        if(oracleAction) oracleFastPollActive=true;
+        else if(oracleHaltedEvents.count(oracleActionEvent)) oracleFastPollActive=false;
         ++tick;
         if(!options.control.empty()) {
             const std::string previousControlState=controlState;
@@ -1024,9 +2124,12 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
         if(ratioProfile && controlState=="active" && control.until>unixSeconds()) controlBoost=control.boost;
         const Bytes systemGap=deficit(options,sys,forecast,controlBoost);
         bool hasMemPsi=false,hasIoPsi=false;
-        const auto memoryPsi=rawPSI(options.proc+"/pressure/memory",hasMemPsi);
-        const auto ioPsi=rawPSI(options.proc+"/pressure/io",hasIoPsi);
-        for(std::size_t appIndex=0;appIndex<config.apps.size();++appIndex) {
+        std::string memoryPsi,ioPsi;
+        if(fullObservationTick) {
+            memoryPsi=rawPSI(options.proc+"/pressure/memory",hasMemPsi);
+            ioPsi=rawPSI(options.proc+"/pressure/io",hasIoPsi);
+        }
+        if(fullObservationTick) for(std::size_t appIndex=0;appIndex<config.apps.size();++appIndex) {
             const auto& app=config.apps[appIndex];
             try {
                 FD dir=openBeneath(root.get(),app.path);
@@ -1043,6 +2146,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                 const auto eventIt=oracleActiveEventForDonor.find(app.name);
                 const auto identityIt=oracleActiveIdentityForDonor.find(app.name);
                 bool identityOk=processes.rssAnonKiB.has_value() && processes.listed==1 && processes.statusRead==1 && identityIt!=oracleActiveIdentityForDonor.end();
+                if(oracleFeedbackFileCategory[appIndex]) identityOk=identityOk && processes.rssFileKiB.has_value();
                 if(identityOk) { const auto p=currentProcesses.find(identityIt->second.first); identityOk=p!=currentProcesses.end() && p->second.startTicks==identityIt->second.second; }
                 if(!identityOk) {
                     if(eventIt!=oracleActiveEventForDonor.end()) oracleHaltedEvents.insert(eventIt->second);
@@ -1050,15 +2154,46 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                     haveFeedback[appIndex]=false;
                     oracleActiveEventForDonor.erase(app.name);
                     oracleActiveIdentityForDonor.erase(app.name);
+                    oracleFeedbackDonorCooldownOnly[appIndex]=false;
                     event(eventLog,"WARN",app.name,"oracle donor identity or RSS telemetry changed/missing; event stopped");
+                } else if(oracleFeedbackFileCategory[appIndex] && *processes.rssFileKiB>lastFeedbackFileKiB[appIndex]+1024) {
+                    const bool donorOnly=oracleFeedbackDonorCooldownOnly[appIndex];
+                    const double cooldownUntil=monotonic()+options.backoffSec;
+                    if(!donorOnly && eventIt!=oracleActiveEventForDonor.end()) oracleHaltedEvents.insert(eventIt->second);
+                    oracleDonorBlockedUntil[app.name]=cooldownUntil;
+                    haveFeedback[appIndex]=false;
+                    oracleFeedbackDonorCooldownOnly[appIndex]=false;
+                    if(donorOnly) {
+                        event(eventLog,"WARN",app.name,"feedback_donor_cooldown reason=whole_process_rssfile_recovery event_action=continue observation_scope=whole_process rss_file_kib="+std::to_string(*processes.rssFileKiB)+" prior_feedback_rss_file_kib="+std::to_string(lastFeedbackFileKiB[appIndex])+" threshold_kib=1024 target_inode_attribution=none feedback_meaning=process_rss_observation boot_s="+std::to_string(cooldownUntil-options.backoffSec)+" cooldown_s="+std::to_string(options.backoffSec));
+                        oracleActiveEventForDonor.erase(app.name); oracleActiveIdentityForDonor.erase(app.name);
+                    } else event(eventLog,"WARN",app.name,"oracle file-RSS recovery exceeded 1 MiB; event stopped and donor cooled down");
                 } else if(residentAnonKiB>lastFeedbackAnonKiB[appIndex]+1024) {
-                    oracleDonorBlockedUntil[app.name]=monotonic()+options.backoffSec;
+                    const bool donorOnly=oracleFeedbackDonorCooldownOnly[appIndex];
+                    const double cooldownUntil=monotonic()+options.backoffSec;
+                    if(!donorOnly && eventIt!=oracleActiveEventForDonor.end()) oracleHaltedEvents.insert(eventIt->second);
+                    oracleDonorBlockedUntil[app.name]=cooldownUntil;
                     haveFeedback[appIndex]=false;
-                    event(eventLog,"WARN",app.name,"oracle post-action resident anon recovered by >1MiB; donor cooldown");
+                    oracleFeedbackDonorCooldownOnly[appIndex]=false;
+                    if(donorOnly) {
+                        event(eventLog,"WARN",app.name,"feedback_donor_cooldown reason=whole_process_rssanon_recovery event_action=continue observation_scope=whole_process rss_anon_kib="+std::to_string(residentAnonKiB)+" prior_feedback_rss_anon_kib="+std::to_string(lastFeedbackAnonKiB[appIndex])+" threshold_kib=1024 rss_file_kib="+std::to_string(processes.rssFileKiB.value_or(0))+" target_inode_attribution=none feedback_meaning=process_rss_observation boot_s="+std::to_string(cooldownUntil-options.backoffSec)+" cooldown_s="+std::to_string(options.backoffSec));
+                        oracleActiveEventForDonor.erase(app.name); oracleActiveIdentityForDonor.erase(app.name);
+                    } else {
+                        event(eventLog,"WARN",app.name,"oracle post-action resident anon recovered by >1MiB; donor cooldown");
+                    }
                 } else if(processes.majfltDelta>0 || processes.minfltDelta>1024) {
-                    oracleDonorBlockedUntil[app.name]=monotonic()+options.backoffSec;
+                    const bool donorOnly=oracleFeedbackDonorCooldownOnly[appIndex];
+                    const double cooldownUntil=monotonic()+options.backoffSec;
+                    if(!donorOnly && oracleFeedbackFileCategory[appIndex] && eventIt!=oracleActiveEventForDonor.end())
+                        oracleHaltedEvents.insert(eventIt->second);
+                    oracleDonorBlockedUntil[app.name]=cooldownUntil;
                     haveFeedback[appIndex]=false;
-                    event(eventLog,"WARN",app.name,"oracle post-action major/minor fault guard; donor cooldown");
+                    oracleFeedbackDonorCooldownOnly[appIndex]=false;
+                    if(donorOnly) {
+                        event(eventLog,"WARN",app.name,"feedback_donor_cooldown reason=whole_process_fault_feedback event_action=continue observation_scope=whole_process major_fault_delta="+std::to_string(processes.majfltDelta)+" minor_fault_delta="+std::to_string(processes.minfltDelta)+" threshold_major_gt=0 threshold_minor_gt=1024 rss_anon_kib="+std::to_string(residentAnonKiB)+" rss_file_kib="+std::to_string(processes.rssFileKiB.value_or(0))+" target_inode_attribution=none feedback_meaning=process_fault_observation boot_s="+std::to_string(cooldownUntil-options.backoffSec)+" cooldown_s="+std::to_string(options.backoffSec));
+                        oracleActiveEventForDonor.erase(app.name); oracleActiveIdentityForDonor.erase(app.name);
+                    } else event(eventLog,"WARN",app.name,oracleFeedbackFileCategory[appIndex]?
+                        "oracle post-file-action fault guard; event stopped and donor cooled down":
+                        "oracle post-action major/minor fault guard; donor cooldown");
                 }
             }
             if(ratioProfile && haveFeedback[appIndex] && residentAnonKiB>lastFeedbackAnonKiB[appIndex]+1024) {
@@ -1182,12 +2317,25 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                 event(eventLog,"WARN",app.name,e.what());
             }
         }
-        if(oracleProfile && !oracleAction && monotonic()-lastOracleSubmit>=1.0) {
+        if(fullObservationTick) nextFullObservation=std::chrono::steady_clock::now()+std::chrono::milliseconds(options.intervalMs);
+        const double oracleSubmitInterval=options.oracleProfile=="peak_transition_os_snapshot"
+            ?static_cast<double>(options.oracleProfileActionIntervalMs)/1000.0:1.0;
+        if(oracleProfile && !oracleAction &&
+           (oracleFastPollActive || monotonic()-lastOracleSubmit>=oracleSubmitInterval)) {
             try {
                 const auto request=parseOracleRequest(readPath(options.oracleSchedule));
                 const double now=monotonic();
+                const bool scheduleCompatible=oracleScheduleCompatible(options.oracleProfile,options.oracleBackend,request.schemaVersion);
+                if(!scheduleCompatible) {
+                    event(eventLog,"ERROR","oracle","schedule schema/profile mismatch; event rejected"); oracleHaltedEvents.insert(request.id);
+                }
+                if(options.oracleProfile=="peak_transition_os_snapshot")
+                    oracleFastPollActive=scheduleCompatible && request.launch>now && request.launch-now<=15.0 &&
+                        !oracleHaltedEvents.count(request.id);
                 std::ostringstream fingerprintOut; fingerprintOut<<request.caseId<<'|'<<std::setprecision(12)<<request.launch<<'|'<<request.needed;
-                for(const auto& donor:request.donors) fingerprintOut<<'|'<<donor.bundle<<'|'<<donor.uid<<'|'<<donor.pid<<'|'<<donor.start<<'|'<<donor.coldReady<<'|'<<donor.windowReady<<'|'<<donor.coldReadyAt<<'|'<<donor.backgroundSince;
+                fingerprintOut<<'|'<<request.schemaVersion;
+                for(const auto& donor:request.donors) fingerprintOut<<'|'<<donor.bundle<<'|'<<donor.uid<<'|'<<donor.pid<<'|'<<donor.start<<'|'<<donor.coldReady<<'|'<<donor.dailyReady<<'|'<<donor.windowReady<<'|'<<donor.readyAt<<'|'<<donor.backgroundSince;
+                if(request.schemaVersion==3) for(const auto& donor:request.donors) fingerprintOut<<'|'<<donor.writebackFilePath<<'|'<<donor.writebackFileDev<<'|'<<donor.writebackFileIno<<'|'<<donor.writebackFileSize;
                 const auto fingerprint=fingerprintOut.str();
                 const auto registered=oracleFingerprints.find(request.id);
                 if(registered!=oracleFingerprints.end() && registered->second!=fingerprint) {
@@ -1216,55 +2364,201 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                         event(eventLog,"WARN","oracle","standard control is paused or unknown; action refused");
                         OracleActionResult refused; refused.actionId=request.id+"_control_refused"; refused.eventId=request.id; refused.caseId=request.caseId; refused.deadline=request.launch; refused.needed=request.needed; refused.status="rejected:control_paused_or_unknown"; appendOracleLedger(options,refused); oracleHaltedEvents.insert(request.id);
                     }
+                    else if(now-lastOracleSubmit<oracleSubmitInterval) {
+                        // Keep polling the active event quickly, but do not prepare or reserve
+                        // another action until the independent action-start interval elapses.
+                    }
                     else {
                         unsigned donorsBelowFloor=0,donorsAtRatioCeiling=0;
-                        for(unsigned attempt=0;attempt<2;++attempt) {
-                            const unsigned donorIndex=(oracleNextDonor[request.id]+attempt)%2; const auto& donor=request.donors[donorIndex];
-                            const std::string expectedBundle=donorIndex==0?"io.memscene.scene4.workload.a1":"io.memscene.scene4.workload.a2";
+                        const auto donorCount=static_cast<unsigned>(request.donors.size());
+                        for(unsigned attempt=0;attempt<donorCount;++attempt) {
+                            const unsigned donorIndex=(oracleNextDonor[request.id]+attempt)%donorCount; const auto& donor=request.donors[donorIndex];
                             const auto appIt=std::find_if(config.apps.begin(),config.apps.end(),[&](const App& app){
                                 const auto slash=app.path.find_last_of('/'); const auto leaf=slash==std::string::npos?app.path:app.path.substr(slash+1);
-                                return app.reclaim && donor.bundle==expectedBundle && leaf.rfind(expectedBundle+"_",0)==0;
+                                return app.reclaim && oracleAppMatchesDonor(options.oracleProfile,app.name,leaf,donor.bundle,donor.uid);
                             });
-                            if(appIt==config.apps.end()) { event(eventLog,"ERROR","oracle","donor bundle/path is outside the exact a1/a2 self-workload allowlist"); oracleHaltedEvents.insert(request.id); break; }
+                            if(appIt==config.apps.end()) { event(eventLog,"ERROR","oracle","donor bundle/path/UID is outside the exact self-workload allowlist"); oracleHaltedEvents.insert(request.id); break; }
+                            const std::string targetKey=request.id+"|"+donor.bundle;
+                            if(options.oracleProfile=="peak_transition_os_snapshot" && isProcFileBackend(options.oracleBackend) &&
+                                !oracleProfileTargetMaySubmit(oracleSubmittedTargets.count(targetKey)!=0,
+                                    donor.pid!=0 && donor.start!=0 && donor.procVerified && donor.procStart==donor.start)) {
+                                ++donorsBelowFloor; continue;
+                            }
                             const auto cooldown=oracleDonorBlockedUntil.find(appIt->name);
                             if(cooldown!=oracleDonorBlockedUntil.end() && now<cooldown->second) {
-                                event(eventLog,"WARN","oracle",donor.bundle+" feedback cooldown remains active");
-                                break;
+                                const bool identityComplete=donor.pid!=0 && donor.start!=0 && donor.procVerified && donor.procStart==donor.start;
+                                if(oracleProfileDonorCooldownScope(request.schemaVersion,options.oracleProfile,options.oracleBackend)) {
+                                    if(!oracleProfileCooldownMayContinue(request.schemaVersion,options.oracleProfile,options.oracleBackend,identityComplete)) {
+                                        event(eventLog,"WARN","oracle",donor.bundle+" feedback cooldown has unknown donor identity; halting_event");
+                                        oracleHaltedEvents.insert(request.id); break;
+                                    }
+                                    std::string cooldownGuardFailure;
+                                    try { cooldownGuardFailure=oracleBackgroundFailure(options,*appIt,donor,now); }
+                                    catch(const std::exception& e) { cooldownGuardFailure=std::string("identity_probe_error:")+e.what(); }
+                                    if(!cooldownGuardFailure.empty()) {
+                                        if(!oracleFreshnessFailureRetryableImpl(cooldownGuardFailure)) {
+                                            event(eventLog,"WARN","oracle",donor.bundle+" feedback cooldown guard_failure="+cooldownGuardFailure+"; halting_event");
+                                            oracleHaltedEvents.insert(request.id);
+                                        } else event(eventLog,"WARN","oracle",donor.bundle+" feedback cooldown guard_failure="+cooldownGuardFailure+"; waiting_for_fresh_proof");
+                                        break;
+                                    }
+                                    ++donorsBelowFloor;
+                                    event(eventLog,"INFO","oracle",donor.bundle+" feedback cooldown remains active; donor skipped and event continues");
+                                    continue;
+                                }
+                                event(eventLog,"WARN","oracle",donor.bundle+" feedback cooldown remains active"); break;
                             }
                             if(control.protectedApps.count(appIt->name) || control.protectedApps.count(donor.bundle)) { event(eventLog,"WARN","oracle",donor.bundle+" is protected by runtime control"); oracleHaltedEvents.insert(request.id); break; }
-                            if(!donor.coldReady) { event(eventLog,"WARN","oracle",donor.bundle+" guard_failure=cold_ready_false; halting event"); oracleHaltedEvents.insert(request.id); break; }
+                            if(request.schemaVersion==1 && !donor.coldReady) { event(eventLog,"WARN","oracle",donor.bundle+" guard_failure=cold_ready_false; halting event"); oracleHaltedEvents.insert(request.id); break; }
+                            const std::string memberWaitKey=request.id+"|"+donor.bundle;
+                            const auto memberWait=oraclePrecommitMemberWaitStart.find(memberWaitKey);
+                            const bool memberWaitStarted=memberWait!=oraclePrecommitMemberWaitStart.end();
+                            const double memberWaitAt=memberWaitStarted?memberWait->second:0.0;
+                            const bool memberRetryScope=oracleProfileDonorCooldownScope(request.schemaVersion,
+                                options.oracleProfile,options.oracleBackend);
+                            if(memberWaitStarted && !oraclePrecommitMemberWaitWindowOpen(true,memberWaitAt,now,request.launch)) {
+                                event(eventLog,"WARN","oracle",donor.bundle+" cgroup_member_count_retry=stopped reason=retry_window_or_deadline_expired"+
+                                    " wait_start_boot="+std::to_string(memberWaitAt)+" now_boot="+std::to_string(now)+
+                                    " deadline_boot="+std::to_string(request.launch)+"; halting_event");
+                                oraclePrecommitMemberWaitStart.erase(memberWaitKey);
+                                oracleHaltedEvents.insert(request.id); break;
+                            }
                             std::string guardFailure;
-                            try { guardFailure=oracleBackgroundFailure(options,*appIt,donor,now); }
+                            CgroupMemberObservation memberObservation;
+                            try { guardFailure=oracleBackgroundFailure(options,*appIt,donor,now,&memberObservation); }
                             catch(const std::exception& e) { guardFailure=std::string("identity_probe_error:")+e.what(); }
+                            const double guardCheckedAt=monotonic();
                             if(!guardFailure.empty()) {
+                                if(guardFailure=="cgroup_member_count_changed" && memberRetryScope) {
+                                    const std::uint64_t solePid=memberObservation.uniquePids.size()==1?memberObservation.uniquePids.front():0;
+                                    const auto retry=oraclePrecommitMemberRetryAction(memberRetryScope,
+                                        memberObservation.readOk,memberObservation.parseValid,memberObservation.entryCount,
+                                        solePid,donor.pid,memberWaitStarted,memberWaitAt,guardCheckedAt,request.launch);
+                                    if(retry==OraclePrecommitMemberRetryAction::Wait) {
+                                        if(!memberWaitStarted) oraclePrecommitMemberWaitStart.emplace(memberWaitKey,guardCheckedAt);
+                                        const double start=memberWaitStarted?memberWaitAt:guardCheckedAt;
+                                        event(eventLog,"WARN","oracle",donor.bundle+" guard_failure=cgroup_member_count_changed; bounded_precommit_recheck=waiting"+
+                                            " entries="+std::to_string(memberObservation.entryCount)+
+                                            " unique="+std::to_string(memberObservation.uniquePids.size())+
+                                            " pids="+([&]{std::string s; for(const auto pid:memberObservation.uniquePids){if(!s.empty())s+="|";s+=std::to_string(pid);} return s;})()+
+                                            " raw="+safeMemberRaw(memberObservation.raw)+
+                                            " wait_start_boot="+std::to_string(start)+" now_boot="+std::to_string(guardCheckedAt)+
+                                            " retry_until_boot="+std::to_string(std::min(start+2.0,request.launch)));
+                                        break;
+                                    }
+                                    event(eventLog,"WARN","oracle",donor.bundle+" guard_failure=cgroup_member_count_changed; bounded_precommit_recheck=stopped"+
+                                        " entries="+std::to_string(memberObservation.entryCount)+
+                                        " unique="+std::to_string(memberObservation.uniquePids.size())+
+                                        " pids="+([&]{std::string s; for(const auto pid:memberObservation.uniquePids){if(!s.empty())s+="|";s+=std::to_string(pid);} return s;})()+
+                                        " raw="+safeMemberRaw(memberObservation.raw)+
+                                        " read_ok="+(memberObservation.readOk?"true":"false")+
+                                        " parse_valid="+(memberObservation.parseValid?"true":"false")+
+                                        " now_boot="+std::to_string(guardCheckedAt)+" deadline_boot="+std::to_string(request.launch)+"; halting_event");
+                                    oraclePrecommitMemberWaitStart.erase(memberWaitKey);
+                                    oracleHaltedEvents.insert(request.id); break;
+                                }
+                                if(guardFailure=="cgroup_member_list_read_error" || guardFailure=="cgroup_member_list_parse_unknown") {
+                                    event(eventLog,"ERROR","oracle",donor.bundle+" guard_failure="+guardFailure+
+                                        " entries="+std::to_string(memberObservation.entryCount)+
+                                        " unique="+std::to_string(memberObservation.uniquePids.size())+
+                                        " invalid_tokens="+std::to_string(memberObservation.invalidCount)+
+                                        " raw="+safeMemberRaw(memberObservation.raw)+
+                                        " read_ok="+(memberObservation.readOk?"true":"false")+
+                                        " parse_valid="+(memberObservation.parseValid?"true":"false")+
+                                        "; halting_event");
+                                    oraclePrecommitMemberWaitStart.erase(memberWaitKey);
+                                    oracleHaltedEvents.insert(request.id); break;
+                                }
                                 if(oracleFreshnessFailureRetryableImpl(guardFailure)) {
+                                    if(memberWaitStarted && !oraclePrecommitMemberWaitWindowOpen(true,memberWaitAt,guardCheckedAt,request.launch)) {
+                                        event(eventLog,"WARN","oracle",donor.bundle+" bounded_precommit_recheck=stopped reason=other_freshness_failure_after_window"+
+                                            " failure="+guardFailure+" wait_start_boot="+std::to_string(memberWaitAt)+
+                                            " now_boot="+std::to_string(guardCheckedAt)+" deadline_boot="+std::to_string(request.launch)+"; halting_event");
+                                        oraclePrecommitMemberWaitStart.erase(memberWaitKey);
+                                        oracleHaltedEvents.insert(request.id); break;
+                                    }
                                     event(eventLog,"WARN","oracle",donor.bundle+" guard_failure="+guardFailure+"; waiting_for_fresh_proof");
                                     break;
                                 }
+                                oraclePrecommitMemberWaitStart.erase(memberWaitKey);
                                 event(eventLog,"WARN","oracle",donor.bundle+" guard_failure="+guardFailure+"; halting_event"); oracleHaltedEvents.insert(request.id); break;
+                            }
+                            if(memberWaitStarted) {
+                                const auto recovered=oraclePrecommitMemberRetryAction(memberRetryScope,true,
+                                    memberObservation.parseValid,memberObservation.entryCount,
+                                    memberObservation.uniquePids.size()==1?memberObservation.uniquePids.front():0,
+                                    donor.pid,true,memberWaitAt,guardCheckedAt,request.launch);
+                                if(recovered!=OraclePrecommitMemberRetryAction::Recovered) {
+                                    event(eventLog,"WARN","oracle",donor.bundle+" bounded_precommit_recheck=stopped reason=member_list_not_exactly_original_pid"+
+                                        " entries="+std::to_string(memberObservation.entryCount)+
+                                        " unique="+std::to_string(memberObservation.uniquePids.size())+
+                                        " wait_start_boot="+std::to_string(memberWaitAt)+" now_boot="+std::to_string(guardCheckedAt)+
+                                        " deadline_boot="+std::to_string(request.launch)+"; halting_event");
+                                    oraclePrecommitMemberWaitStart.erase(memberWaitKey);
+                                    oracleHaltedEvents.insert(request.id); break;
+                                }
+                                event(eventLog,"INFO","oracle",donor.bundle+" bounded_precommit_recheck=member_count_recovered"+
+                                    " entries="+std::to_string(memberObservation.entryCount)+
+                                    " unique="+std::to_string(memberObservation.uniquePids.size())+
+                                    " pid="+std::to_string(donor.pid)+" now_boot="+std::to_string(guardCheckedAt)+
+                                    "; revalidated_full_guard_before_preflight");
                             }
                             try {
                                 FD appDir=openBeneath(root.get(),appIt->path);
                                 const auto stat=maybeAt(appDir.get(),"memory.stat");
                                 const auto anon=stat?parseVendorStat(*stat).anonKiB:std::optional<Bytes>{};
-                                const auto processAnon=aggregateRssAnon({donor.pid});
-                                if(!anon || !processAnon) throw std::runtime_error("anon_telemetry_missing");
-                                const Bytes donorBytes=std::min(*anon*1024,*processAnon*1024);
+                                Bytes donorBytes=0;
+                                Bytes donorResidentBytes=0;
+                                if(isProcFileBackend(options.oracleBackend)) {
+                                    const auto fileSample=sampleOracleRss(donor,*appIt);
+                                    if(!fileSample || !fileSample->rssFileKiB || !fileSample->rssKiB || *fileSample->rssFileKiB==0)
+                                        throw std::runtime_error("process_vmrss_or_rssfile_telemetry_missing");
+                                    if(*fileSample->rssFileKiB>std::numeric_limits<Bytes>::max()/1024 ||
+                                       *fileSample->rssKiB>std::numeric_limits<Bytes>::max()/1024)
+                                        throw std::runtime_error("process_vmrss_or_rssfile_bytes_overflow");
+                                    donorBytes=*fileSample->rssFileKiB*1024;
+                                    donorResidentBytes=*fileSample->rssKiB*1024;
+                                    if(donorResidentBytes<donorBytes || donorResidentBytes-donorBytes<std::max(appIt->keep,512*MiB)) {
+                                        event(eventLog,"WARN",donor.bundle,"proc_file skipped: retained_other_below_keep_reserve");
+                                        ++donorsBelowFloor; continue;
+                                    }
+                                } else {
+                                    const auto processAnon=aggregateRssAnon({donor.pid});
+                                    if(!anon || !processAnon) throw std::runtime_error("anon_telemetry_missing");
+                                    donorBytes=std::min(*anon*1024,*processAnon*1024);
+                                }
                                 const Bytes eventGap=deficit(options,sys,forecast,request.needed);
-                                const Bytes swapRoom=sub(sys.swapFree,options.swapReserve);
                                 const Bytes globalRoom=oracleGlobalLimit.room(now,options.oracleGlobalCap);
                                 const Bytes caseRoom=oracleCaseLimits[request.caseId].room(now,options.oracleCaseCap);
                                 const Bytes appRoom=oracleAppLimits[donor.bundle].room(now,options.oracleAppCap);
-                                const Bytes rawCap=std::min({eventGap,swapRoom,sub(donorBytes,512*MiB),options.oracleBatch,globalRoom,caseRoom,appRoom});
-                                const Bytes cap=sub(rawCap,64*MiB);
+                                const Bytes keepFloor=options.oracleRatioSemantics=="cumulative_anon_watermark"?options.oracleCumulativeKeep:512*MiB;
+                                const Bytes cap=isProcFileBackend(options.oracleBackend)
+                                    ?sub(std::min({eventGap,options.oracleBatch,globalRoom,caseRoom,appRoom}),64*MiB)
+                                    :sub(std::min({eventGap,sub(sys.swapFree,options.swapReserve),sub(donorBytes,keepFloor),options.oracleBatch,globalRoom,caseRoom,appRoom}),64*MiB);
                                 unsigned ratio=0;
                                 Bytes nominal=0;
                                 OracleWatermarkPlan watermark;
-                                if(options.oracleRatioSemantics=="cumulative_anon_watermark") {
+                                if(isProcFileBackend(options.oracleBackend)) {
+                                    nominal=options.oracleBackend=="proc_file_writeback"
+                                        ?oracleProcFileWritebackReservation(donorBytes,donor.writebackFileSize,donorResidentBytes,
+                                            std::max(appIt->keep,512*MiB),eventGap,options.oracleBatch,globalRoom,caseRoom,appRoom,64*MiB,options.minBatch)
+                                        :oracleProcFileReservation(donorBytes,donorResidentBytes,
+                                            std::max(appIt->keep,512*MiB),eventGap,options.oracleBatch,
+                                            globalRoom,caseRoom,appRoom,64*MiB,options.minBatch);
+                                    if(nominal==0) {
+                                        const Bytes limiting=std::min({eventGap,options.oracleBatch,globalRoom,caseRoom,appRoom});
+                                        const Bytes requiredFileEstimate=options.oracleBackend=="proc_file_writeback"?std::max(donorBytes,donor.writebackFileSize):donorBytes;
+                                        const std::string skip=requiredFileEstimate<options.minBatch?"below_min_batch_or_registered_file_too_small":
+                                            limiting==eventGap?"system_deficit":limiting==options.oracleBatch?"single_batch_cap":
+                                            limiting==globalRoom?"global_shared_room":limiting==caseRoom?"case_shared_room":"app_shared_room";
+                                        event(eventLog,"WARN",donor.bundle,"proc_file skipped: conservative_file_work_estimate_exceeds_"+skip);
+                                        ++donorsBelowFloor; continue;
+                                    }
+                                } else if(options.oracleRatioSemantics=="cumulative_anon_watermark") {
                                     const auto fresh=sampleOracleRss(donor,*appIt);
                                     if(!fresh || !fresh->vmSwapKiB) throw std::runtime_error("cumulative_watermark_proc_or_vmswap_unknown");
                                     const Bytes liveResident=fresh->rssAnonKiB*1024;
-                                    const Bytes candidateCap=std::min(cap,sub(liveResident,576*MiB));
+                                    const Bytes candidateCap=std::min(cap,sub(liveResident,options.oracleCumulativeKeep+64*MiB));
                                     watermark=oracleCumulativeWatermarkForCap(liveResident,*fresh->vmSwapKiB*1024,candidateCap,options.oracleMaxRatio);
                                     ratio=watermark.ratio;
                                     nominal=watermark.estimatedIncrementBytes;
@@ -1272,46 +2566,69 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                                     ratio=oracleRatioForCap(cap,donorBytes,options.oracleMaxRatio);
                                     nominal=donorBytes?(donorBytes*ratio)/100:0;
                                 }
-                                if(ratio==0 || nominal<options.minBatch) {
+                                if(!isProcFileBackend(options.oracleBackend) && (ratio==0 || nominal<options.minBatch)) {
                                     ++donorsBelowFloor;
                                     continue;
                                 }
                                 const auto priorRatioIt=oraclePositiveRatioByEventDonor.find(request.id+"|"+donor.bundle);
                                 const unsigned priorSuccessfulRatio=priorRatioIt==oraclePositiveRatioByEventDonor.end()?0:priorRatioIt->second;
-                                if(priorSuccessfulRatio && !oracleRatioCanAdvance(priorSuccessfulRatio,ratio)) {
+                                if(!isProcFileBackend(options.oracleBackend) && priorSuccessfulRatio && !oracleRatioCanAdvance(priorSuccessfulRatio,ratio)) {
                                     ++donorsAtRatioCeiling;
                                     event(eventLog,"INFO","oracle",donor.bundle+" ratio_skipped_candidate="+std::to_string(ratio)+
                                           " prior_positive_ratio="+std::to_string(priorSuccessfulRatio)+" reason=no_strict_increase");
                                     continue;
                                 }
-                                if(monotonic()>=request.launch) break;
+                                const double reserveCheckAt=monotonic();
+                                if(memberWaitStarted && !oraclePrecommitMemberWaitWindowOpen(true,memberWaitAt,reserveCheckAt,request.launch)) {
+                                    event(eventLog,"WARN","oracle",donor.bundle+" bounded_precommit_recheck=stopped reason=retry_window_expired_before_reservation"+
+                                        " wait_start_boot="+std::to_string(memberWaitAt)+" now_boot="+std::to_string(reserveCheckAt)+
+                                        " deadline_boot="+std::to_string(request.launch)+"; no_reservation_no_write");
+                                    oraclePrecommitMemberWaitStart.erase(memberWaitKey);
+                                    oracleHaltedEvents.insert(request.id); break;
+                                }
+                                if(!oracleMayReserveAction(oracleAction.has_value(),reserveCheckAt,lastOracleSubmit,
+                                    oracleSubmitInterval,request.launch)) break;
                                 // Persist reservation before submitting. Missing completion later means this amount remains conservatively charged.
                                 const std::string actionId=request.id+"_"+donor.bundle+"_"+std::to_string(unixMillis());
-                                OracleActionResult reserved; reserved.actionId=actionId; reserved.eventId=request.id; reserved.caseId=request.caseId; reserved.bundle=donor.bundle; reserved.pid=donor.pid; reserved.uid=donor.uid; reserved.start=donor.start; reserved.deadline=request.launch; reserved.needed=request.needed; reserved.remaining=eventGap; reserved.input=donorBytes; reserved.ratio=ratio; reserved.plannedRatio=ratio; reserved.nominal=nominal; reserved.evidenceSource=donor.evidenceSource; reserved.aaObserved=donor.aaObserved; reserved.windowObserved=donor.windowObserved; reserved.procObserved=donor.procObserved; reserved.lifecycleObserved=donor.lifecycleObserved; reserved.ratioSemantics=options.oracleRatioSemantics; reserved.totalAnonProxyBytes=watermark.totalAnonProxyBytes; reserved.currentVmSwapBytes=watermark.currentVmSwapBytes; reserved.estimatedIncrementBytes=watermark.estimatedIncrementBytes; reserved.estimatedRetainedBytes=watermark.estimatedRetainedBytes; reserved.status="reserved_before_write_pending_result"; appendOracleLedger(options,reserved);
-                                oracleGlobalLimit.charge(now,nominal); oracleCaseLimits[request.caseId].charge(now,nominal); oracleAppLimits[donor.bundle].charge(now,nominal);
-                                lastOracleSubmit=now; oracleActionDeadline=request.launch; oracleActionEvent=request.id; oracleActionId=actionId; oracleNextDonor[request.id]=(donorIndex+1)%2;
+                                OracleActionResult reserved; reserved.actionId=actionId; reserved.eventId=request.id; reserved.caseId=request.caseId; reserved.bundle=donor.bundle; reserved.pid=donor.pid; reserved.uid=donor.uid; reserved.start=donor.start; reserved.deadline=request.launch; reserved.needed=request.needed; reserved.remaining=eventGap; reserved.input=donorBytes; reserved.ratio=ratio; reserved.plannedRatio=ratio; reserved.nominal=nominal; reserved.evidenceSource=donor.evidenceSource; reserved.aaObserved=donor.aaObserved; reserved.windowObserved=donor.windowObserved; reserved.procObserved=donor.procObserved; reserved.lifecycleObserved=donor.lifecycleObserved; reserved.ratioSemantics=options.oracleRatioSemantics; reserved.backend=options.oracleBackend; reserved.totalAnonProxyBytes=watermark.totalAnonProxyBytes; reserved.currentVmSwapBytes=watermark.currentVmSwapBytes; reserved.estimatedIncrementBytes=watermark.estimatedIncrementBytes; reserved.estimatedRetainedBytes=watermark.estimatedRetainedBytes; reserved.status="reserved_before_write_pending_result"; appendOracleLedger(options,reserved);
+                                if(options.oracleBackend=="proc_file_writeback") {
+                                    const Bytes workEstimate=std::max(donorBytes,donor.writebackFileSize);
+                                    event(eventLog,"INFO","oracle",donor.bundle+" writeback_budget action_id="+actionId+
+                                        " work_estimate_bytes="+std::to_string(workEstimate)+
+                                        " reservation_margin_bytes="+std::to_string(nominal-workEstimate)+
+                                        " nominal_reserved_bytes="+std::to_string(nominal)+
+                                        " nominal_semantics=charged_estimate_plus_margin observed_rss_delta_is_separate=true");
+                                }
+                                oraclePrecommitMemberWaitStart.erase(memberWaitKey);
+                                const double reservedAt=monotonic();
+                                oracleGlobalLimit.charge(reservedAt,nominal); oracleCaseLimits[request.caseId].charge(reservedAt,nominal); oracleAppLimits[donor.bundle].charge(reservedAt,nominal);
+                                lastOracleSubmit=reservedAt; oracleActionDeadline=request.launch; oracleActionEvent=request.id; oracleActionId=actionId; oracleNextDonor[request.id]=(donorIndex+1)%donorCount;
                                 tickDecision="oracle_reserved_and_queued"; tickTarget=donor.bundle; tickBudget=nominal;
-                                oracleAction.emplace(std::async(std::launch::async,[&,app=*appIt,donor,request,ratio,priorSuccessfulRatio,nominal,eventGap,donorBytes,actionId]{ return performOracleAction(options,app,donor,request,ratio,priorSuccessfulRatio,nominal,eventGap,donorBytes,actionId); }));
+                                oracleAction.emplace(std::async(std::launch::async,[&,app=*appIt,donor,request,ratio,priorSuccessfulRatio,nominal,eventGap,donorBytes,forecast,actionId]{ return performOracleAction(options,app,donor,request,ratio,priorSuccessfulRatio,nominal,eventGap,donorBytes,forecast,actionId); }));
+                                if(options.oracleProfile=="peak_transition_os_snapshot") oracleFastPollActive=true;
                                 break;
                             } catch(const std::exception& e) { event(eventLog,"ERROR","oracle",donor.bundle+" action preflight failed: "+e.what()); oracleHaltedEvents.insert(request.id); break; }
                         }
-                        if(donorsBelowFloor==2 && !oracleHaltedEvents.count(request.id)) {
-                            OracleActionResult skipped; skipped.actionId=request.id+"_capacity_skip_"+std::to_string(unixMillis()); skipped.eventId=request.id; skipped.caseId=request.caseId; skipped.deadline=request.launch; skipped.needed=request.needed; skipped.status="skipped_both_donors_below_min_batch_or_budget_floor"; appendOracleLedger(options,skipped); oracleHaltedEvents.insert(request.id);
+                        if(donorsBelowFloor==donorCount && !oracleHaltedEvents.count(request.id)) {
+                            OracleActionResult skipped; skipped.actionId=request.id+"_capacity_skip_"+std::to_string(unixMillis()); skipped.eventId=request.id; skipped.caseId=request.caseId; skipped.deadline=request.launch; skipped.needed=request.needed; skipped.status=isProcFileBackend(options.oracleBackend)?"skipped_profile_targets_exhausted_or_file_estimate_over_budget":"skipped_both_donors_below_min_batch_or_budget_floor"; appendOracleLedger(options,skipped); oracleHaltedEvents.insert(request.id);
                         }
-                        if(donorsAtRatioCeiling==2 && !oracleHaltedEvents.count(request.id)) {
+                        if(donorsAtRatioCeiling==donorCount && !oracleHaltedEvents.count(request.id)) {
                             OracleActionResult skipped; skipped.actionId=request.id+"_ratio_ceiling_skip_"+std::to_string(unixMillis()); skipped.eventId=request.id; skipped.caseId=request.caseId; skipped.deadline=request.launch; skipped.needed=request.needed; skipped.status="skipped_no_ratio_increase_after_positive_feedback"; appendOracleLedger(options,skipped); oracleHaltedEvents.insert(request.id);
                         }
                     }
                 }
             } catch(const std::exception& e) { event(eventLog,"ERROR","oracle_schedule",e.what()); }
         }
-        systemLog.row({std::to_string(unixMillis()),Schema,std::to_string(sys.total),std::to_string(sys.available),
+        if(fullObservationTick) systemLog.row({std::to_string(unixMillis()),Schema,std::to_string(sys.total),std::to_string(sys.available),
             std::to_string(sys.free),std::to_string(sys.swapTotal),std::to_string(sys.swapFree),
             std::to_string(forecast.predictedAvailable),std::to_string(static_cast<long long>(forecast.declineBytesPS)),
             memoryPsi,hasMemPsi?"present_unverified":"unknown",ioPsi,hasIoPsi?"present_unverified":"unknown",
             controlState=="unknown"?"control_unknown":controlState=="paused"?"paused":tickDecision,
             tickBudget?std::to_string(tickBudget):std::string{},tickDecision,tickTarget});
-        deadline+=std::chrono::milliseconds(options.intervalMs);
+        const unsigned loopIntervalMs=oracleLoopIntervalMs(
+            options.oracleProfile=="peak_transition_os_snapshot",oracleFastPollActive,
+            options.oracleProfilePollIntervalMs,static_cast<unsigned>(options.intervalMs));
+        deadline+=std::chrono::milliseconds(loopIntervalMs);
         if(deadline<std::chrono::steady_clock::now()) deadline=std::chrono::steady_clock::now();
         while(!stopping() && std::chrono::steady_clock::now()<deadline) {
             const auto remain=deadline-std::chrono::steady_clock::now();

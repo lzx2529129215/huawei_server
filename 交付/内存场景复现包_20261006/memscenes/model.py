@@ -97,10 +97,30 @@ def attempt_outcome(peak_begin: bool, peak_reached: bool, ready: bool,
     return "unconfirmed"
 
 def attempts_complete(outcomes: list[str], daily_barrier_complete: bool) -> bool:
-    terminal = {"success", "confirmed_memory_failure"}
+    terminal = {"success", "confirmed_memory_failure", "confirmed_oom_after_peak"}
     if not outcomes or any(outcome not in terminal for outcome in outcomes):
         return False
     return daily_barrier_complete or all(outcome == "confirmed_memory_failure" for outcome in outcomes)
+
+def _journal_boottime_seconds(row: dict) -> float | None:
+    """Return an explicitly logged monotonic/BOOTTIME value without guessing."""
+    for key in ("boottime_ns", "monotonic_ns"):
+        value = row.get(key)
+        if value is not None:
+            try:
+                stamp = int(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            return stamp / 1e9 if stamp > 0 else None
+    for key in ("boottime_seconds", "device_uptime_seconds"):
+        value = row.get(key)
+        if value is not None:
+            try:
+                stamp = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            return stamp if math.isfinite(stamp) and stamp > 0 else None
+    return None
 
 def disk_bytes(raw: str) -> int | None:
     match = re.search(r"write_total_size:\s*(\d+)", raw)
@@ -253,6 +273,9 @@ class EventBook:
                                  anchor_uptime: float, evidence: str,
                                  max_clock_drift_s: float = 2.0, *,
                                  scene4_cold_only: bool = False,
+                                 scene4_peak_transition: bool = False,
+                                 daily_attempt_rows: dict[str, list[dict]] | None = None,
+                                 daily_journal_readback_complete_bundles: set[str] | None = None,
                                  journal_readback_complete_bundles: set[str] | None = None,
                                  journal_case_ids: dict[str, str] | None = None,
                                  startup_failure_bundles: set[str] | None = None) -> dict:
@@ -320,7 +343,8 @@ class EventBook:
             bundle = owners[0] if len(owners) == 1 else None
             if bundle is None or targets.get(bundle) is None:
                 continue
-            bundle_case_id = (journal_case_ids or {}).get(bundle, case_id) if scene4_cold_only else case_id
+            bundle_case_id = ((journal_case_ids or {}).get(bundle, case_id)
+                              if scene4_cold_only or scene4_peak_transition else case_id)
             dmesg_s = float(stamp_match[1])
             event_uptime = dmesg_s + (begin_offset + end_offset) / 2.0
             if not start_uptime <= event_uptime <= end_uptime:
@@ -332,7 +356,7 @@ class EventBook:
                     for row in attempt_rows.get(bundle, []))
             except (TypeError, ValueError, OverflowError):
                 continue
-            if not has_peak_for_pid:
+            if not has_peak_for_pid and not scene4_peak_transition:
                 continue
             identities = observed.get(pid, [])
             if isinstance(identities, dict):
@@ -353,7 +377,119 @@ class EventBook:
                 continue
             journal_identity = None
             readiness_relation = None
-            if scene4_cold_only:
+            if scene4_peak_transition:
+                if bundle not in (daily_journal_readback_complete_bundles or set()):
+                    continue
+                if bundle not in (journal_readback_complete_bundles or set()):
+                    continue
+                daily_rows = [row for row in (daily_attempt_rows or {}).get(bundle, [])
+                              if row.get("case_id") == bundle_case_id]
+                peak_case_rows = [row for row in attempt_rows.get(bundle, [])
+                                  if row.get("case_id") == case_id]
+                case_rows = daily_rows + peak_case_rows
+                identity_rows = [row for row in case_rows if str(row.get("pid", "")) == str(pid)]
+                try:
+                    generations = {(int(row.get("pid", -1)), int(row.get("uid", -1)),
+                                    str(row.get("start_ticks", ""))) for row in identity_rows}
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if (len(generations) != 1 or next(iter(generations))[0] != pid or
+                        next(iter(generations))[1] != int(targets[bundle]) or
+                        not next(iter(generations))[2].isdecimal() or
+                        int(next(iter(generations))[2]) <= 0):
+                    continue
+                gen_pid, gen_uid, gen_ticks = next(iter(generations))
+                journal_ticks = {str(row.get("start_ticks")) for row in identity_rows
+                                 if row.get("start_ticks") is not None}
+                # Bind readiness to this victim's exact generation. A later
+                # launch under a different PID in the same case must not
+                # invalidate an already evidenced short-lived victim.
+                def row_matches_victim_generation(row):
+                    try:
+                        return (int(row.get("pid", -1)) == gen_pid and
+                                int(row.get("uid", -1)) == gen_uid and
+                                str(row.get("start_ticks", "")) == gen_ticks)
+                    except (TypeError, ValueError, OverflowError):
+                        return False
+                daily_begin_rows = [row for row in daily_rows
+                    if row.get("event") == "startup_begin" and row_matches_victim_generation(row)]
+                daily_ready_rows = [row for row in daily_rows
+                    if row.get("event") == "daily_ready" and row_matches_victim_generation(row)]
+                if len(daily_begin_rows) != 1 or len(daily_ready_rows) > 1:
+                    continue
+                try:
+                    begin_pid, begin_uid = int(daily_begin_rows[0].get("pid", -1)), int(daily_begin_rows[0].get("uid", -1))
+                    begin_ticks = str(daily_begin_rows[0].get("start_ticks", ""))
+                    begin_s = float(_journal_boottime_seconds(daily_begin_rows[0]))
+                    ready_s = float(_journal_boottime_seconds(daily_ready_rows[0])) if daily_ready_rows else None
+                except (TypeError, ValueError, OverflowError, NameError):
+                    continue
+                if (begin_pid != gen_pid or begin_uid != gen_uid or begin_ticks != gen_ticks or
+                        not math.isfinite(begin_s) or begin_s <= 0 or begin_s > event_uptime or
+                        (ready_s is not None and (not math.isfinite(ready_s) or ready_s < begin_s))):
+                    continue
+                if ready_s is not None:
+                    ready_row = daily_ready_rows[0]
+                    try:
+                        ready_identity = (int(ready_row.get("pid", -1)),
+                                          int(ready_row.get("uid", -1)),
+                                          str(ready_row.get("start_ticks", "")))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if ready_identity != (gen_pid, gen_uid, gen_ticks):
+                        continue
+                peak_begin_rows = [row for row in peak_case_rows
+                    if row.get("event") == "peak_begin" and row_matches_victim_generation(row)]
+                peak_reached_rows = [row for row in peak_case_rows
+                    if row.get("event") == "peak_reached" and row_matches_victim_generation(row)]
+                if len(peak_begin_rows) > 1 or len(peak_reached_rows) > 1:
+                    continue
+                peak_reached_s = None
+                if peak_reached_rows:
+                    peak_row = peak_reached_rows[0]
+                    try:
+                        peak_reached_s = float(_journal_boottime_seconds(peak_row))
+                        if (int(peak_row.get("pid", -1)) != gen_pid or
+                                int(peak_row.get("uid", -1)) != gen_uid or
+                                str(peak_row.get("start_ticks", "")) != gen_ticks or
+                                not math.isfinite(peak_reached_s) or peak_reached_s < begin_s):
+                            continue
+                    except (TypeError, ValueError, OverflowError, NameError):
+                        continue
+                peak_begin_s = None
+                if peak_begin_rows:
+                    peak_begin = peak_begin_rows[0]
+                    try:
+                        peak_begin_s = _journal_boottime_seconds(peak_begin)
+                        if (int(peak_begin.get("pid", -1)) != gen_pid or
+                                int(peak_begin.get("uid", -1)) != gen_uid or
+                                str(peak_begin.get("start_ticks", "")) != gen_ticks or
+                                peak_begin_s is None or peak_begin_s < begin_s):
+                            continue
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                if identities and identity is None:
+                    # A sampled PID under another generation or outside its
+                    # observed lifetime cannot be reassigned from a kernel comm.
+                    continue
+                if identity is not None and str(identity.get("start_ticks", "")) != gen_ticks:
+                    continue
+                if identity is None:
+                    identity = {"bundle": bundle, "uid": gen_uid, "start_ticks": gen_ticks}
+                    identity_source = "complete_daily_and_peak_journals_exact_pid_uid_ticks"
+                else:
+                    identity_source = "process_history_plus_complete_daily_and_peak_journals"
+                ready_before_victim = ready_s is not None and ready_s <= event_uptime
+                if not ready_before_victim:
+                    readiness_relation = "pre_ready"
+                elif peak_reached_s is not None and peak_reached_s <= event_uptime:
+                    readiness_relation = "post_peak"
+                elif peak_begin_s is not None and peak_begin_s <= event_uptime:
+                    readiness_relation = "peak_allocating"
+                else:
+                    readiness_relation = "before_promote"
+                startup_eligible = readiness_relation in ("pre_ready", "peak_allocating")
+            elif scene4_cold_only:
                 if identities and identity is None:
                     # A sampled PID known under another UID/generation/lifetime
                     # must never be reassigned using a truncated kernel comm.
@@ -505,11 +641,19 @@ class EventBook:
                      "mem_oom selected target process and process exit followed",
                      evidence + ":\n" + line.strip() + "\n" + exit_line.strip(), incident,
                      f"{pid}:{identity['start_ticks']}:{dmesg_s:.6f}")
+            if scene4_peak_transition and readiness_relation in ("pre_ready", "peak_allocating"):
+                failure_reason = ("OOM before daily_ready; startup attempt failed" if readiness_relation == "pre_ready"
+                                  else "OOM during peak allocation before peak_reached; peak transition failed")
+                self.add("startup_failure", case_id, bundle, pid, wall_ms,
+                         "peak_transition_oom", failure_reason,
+                         evidence + ":\n" + line.strip() + "\n" + exit_line.strip(), incident,
+                         f"{pid}:{identity['start_ticks']}:{dmesg_s:.6f}:transition-failure")
             parsed_by_incident.setdefault(incident, {"bundle": bundle, "pid": pid,
                 "uid": targets[bundle], "start_ticks": identity["start_ticks"],
                 "event_uptime_s": event_uptime, "identity_source": identity_source,
                 "readiness_relation": readiness_relation,
-                "startup_failure_eligible": startup_eligible if scene4_cold_only else False,
+                "startup_failure_eligible": startup_eligible if (scene4_cold_only or scene4_peak_transition) else False,
+                "peak_transition_stage": readiness_relation if scene4_peak_transition else None,
                 "victim_line": line, "exit_line": exit_line,
                 "exit_dmesg_s": exit_dmesg_s,
                 "completion_evidence": "short_select_exit_pair" if exit_dmesg_s-dmesg_s <= 2.0 else
@@ -521,7 +665,8 @@ class EventBook:
 
     def finalize_startup_attempt(self, case_id: str, bundle: str, rows: list[dict],
                                  observed: dict[int, list[dict]], timestamp_ms: int,
-                                 evidence: str, *, allow_timeout: bool = True) -> str:
+                                 evidence: str, *, allow_timeout: bool = True,
+                                 peak_transition_profile: bool = False) -> str:
         """Classify no-ready attempts after all kernel/system sources are collected."""
         if any(row.get("event") == "startup_ready" for row in rows):
             return "ready"
@@ -529,6 +674,17 @@ class EventBook:
                              event["bundle"] == bundle and event["category"] == "startup_failure"]
         if existing_failures:
             return "confirmed_memory_failure"
+        if peak_transition_profile:
+            # In this explicit legacy peak-transition profile, reaching the
+            # requested peak is the transition boundary. A later hold-period
+            # OOM remains an OOM event and must not become a duplicate startup
+            # failure merely because startup_ready is emitted after the hold.
+            if any(row.get("event") == "peak_reached" and row.get("case_id") == case_id
+                   for row in rows):
+                return "peak_reached_no_startup_ready"
+            if not allow_timeout:
+                return "aborted_before_peak"
+            return "unconfirmed_peak_transition"
         begins = [row for row in rows if row.get("event") == "peak_begin" and
                   row.get("case_id") == case_id]
         if not begins and not allow_timeout:

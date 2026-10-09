@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from memscenes.device import Device
 from memscenes.runner import (ROOT, Session, read, save, effective_settings, scene1, scene2, scene3, scene4,
-                              calibrate, calibrate_scene4, freeze, compare)
+                              calibrate, calibrate_scene4, freeze, compare, scene4_execution_engine)
 
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -58,7 +58,9 @@ def main() -> int:
         config["hdc"] = str((config_path.parent / hdc_path).resolve())
     if args.command == "preflight" and args.offline:
         test_apps = config.get("test_apps", [])
-        hap_dir = ROOT / ("bin/scene4_apps" if config.get("scene4") else "bin/apps")
+        configured_hap_dir = config.get("scene4", {}).get("hap_dir") if config.get("scene4") else None
+        hap_dir = ((ROOT / configured_hap_dir).resolve() if configured_hap_dir else
+                   ROOT / ("bin/scene4_apps" if config.get("scene4") else "bin/apps"))
         haps = sorted(hap_dir.glob("a*.hap"))
         missing = []
         if not Path(config["hdc"]).is_file():
@@ -131,6 +133,17 @@ def main() -> int:
             output = scene2(session, args.subcase, frozen)
         elif args.scene == 3:
             output = scene3(session)
+        elif args.scene == 4 and scene4_execution_engine(config) == "scene2":
+            # Explicit legacy workload route: eight daily apps are raised to
+            # peak by the already-qualified Scene2 engine. Keep the default
+            # Scene4 oracle cold-start route unchanged.
+            session.result["scene4_execution_route"] = {
+                "profile": "legacy_peak_transition",
+                "engine": "scene2_case",
+                "hap_manifest": config.get("scene4", {}).get("hap_manifest"),
+                "reclaim_enabled": False,
+            }
+            output = scene2(session, args.subcase, frozen)
         else:
             output = scene4(session)
         result = read(output / "result.json")
