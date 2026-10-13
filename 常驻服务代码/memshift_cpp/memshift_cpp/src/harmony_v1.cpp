@@ -146,6 +146,7 @@ std::map<std::string,Bytes> parseKiBFields(const std::string& text) {
     return fields;
 }
 
+//lzx-note 
 struct ProcessAggregate {
     std::size_t listed=0, statusRead=0, smapsRead=0;
     std::optional<Bytes> rssKiB, vmSwapKiB, rssAnonKiB, rssFileKiB;
@@ -217,6 +218,11 @@ std::string safeMemberRaw(const std::string& raw) {
     return out;
 }
 
+//lzx-note 
+/**
+ * 逐个打开配置中的cgroup目录，读取组统计和成员进程
+ * 再读取 /proc/<pid>/status, smaps_rollup, stat 等信息
+ */
 ProcessAggregate sampleProcesses(const std::vector<std::uint64_t>& ids,
     const std::map<std::uint64_t,ProcStat>& previous,std::map<std::uint64_t,ProcStat>& current) {
     ProcessAggregate total; total.listed=ids.size();
@@ -2051,11 +2057,46 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
     double lastOracleSubmit=0;
     double oracleActionDeadline=0;
     std::string oracleActionEvent,oracleActionId;
-    while(!stopping() && (!ticks || tick<ticks)) {
-        const auto iterationStart=std::chrono::steady_clock::now();
-        const bool fullObservationTick=oracleProfileRunsFullObservation(
+    //lzx-note 鸿蒙常驻服务主循环如下：
+    while(!stopping() && (!ticks || tick<ticks)) { 
+        // 中文导读：这是鸿蒙后端的主循环。普通 harmony-v1 每轮采样并记录；
+        // 只有显式 --apply 进入 ratio profile 时，应用处理分支才可能写设备接口。
+        // Oracle profile 还有独立的事件调度逻辑，因此本循环内相关代码会更复杂。
+
+        
+        // 记录本轮开始时刻；后面用单调时钟控制周期，不受系统时间校准影响。
+        /**
+         * lzx-note
+         *      std::chrono::steady_clock：   单调时钟，适合测量时间间隔。系统校时或用户调整日期时间时，它不会像日历时钟那样跳动。
+                now()：                       读取这个时钟此刻的时间点，返回一个 time_point。
+                const auto iterationStart：   让编译器推导返回类型，并把这个时间点存起来；const 表示后面不重新赋值。
+            后面代码用它作比较，
+       */
+        const auto iterationStart=std::chrono::steady_clock::now();  //lzx-note-normal
+
+        // Oracle 事件活跃时可能提高轮询频率；完整系统/应用采样仍按周期节拍执行。
+        /**
+         *  决定本轮要不要做一次完整的系统和应用采样
+         *      只有：
+         *          当前是 peak_transition_os_snapshot
+         *          并且快速轮询事件活跃
+         *          并且完整采样周期还没到
+         *      才跳过完整采样
+         * 因为要在靠近事件截止时间时更频繁地检查事件计划，避免错过短暂的操作窗口。
+         * 但完整应用采样会读取每个应用组和多个 /proc/<pid>/... 文件，
+         * 频繁执行会增加设备上的 I/O 和 CPU 开销。
+         * 
+         * 快速轮询：关注外部事件计划里的回收事件是否临近截止时间，是否仍有效，
+         * 以及是否满足继续准备动作的条件。
+         */
+        const bool fullObservationTick=oracleProfileRunsFullObservation(  //lzx-note-normal
             options.oracleProfile=="peak_transition_os_snapshot",oracleFastPollActive,
             iterationStart>=nextFullObservation);
+
+
+//lzx-note 测试逻辑begin===================================================================================================================================================================================================================================================================
+ 
+        // Oracle 的回收动作在异步任务中执行：若任务完成，本轮取回结果并写账本/更新反馈状态。
         if(oracleAction && oracleAction->wait_for(std::chrono::milliseconds(0))==std::future_status::ready) {
             try { const auto result=oracleAction->get(); appendOracleLedger(options,result); event(eventLog,"INFO",result.bundle,"oracle action_id="+result.actionId+" status="+result.status+" nominal_bytes="+std::to_string(result.nominal)+" overlap="+(result.overlap?"true":"false"));
                 if(options.oracleProfile=="peak_transition_os_snapshot" && isProcFileBackend(options.oracleBackend) && (result.writeAttempted || result.writebackAttempted))
@@ -2097,50 +2138,89 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
             catch(const std::exception& e) { event(eventLog,"ERROR","oracle_ledger",e.what()); oracleHaltedEvents.insert(oracleActionEvent); ++samplingErrors; }
             oracleAction.reset();
         }
+        // 若异步 Oracle 动作跨过事件截止时间仍未返回，记为结果未知并停止该事件继续调度。
         if(oracleAction && monotonic()>=oracleActionDeadline && !oracleUnknownDeadlineRows.count(oracleActionId)) {
             OracleActionResult r; r.actionId=oracleActionId; r.eventId=oracleActionEvent; r.deadline=oracleActionDeadline; r.backend=options.oracleBackend; r.status="reserved_action_still_inflight_at_deadline_unknown"; r.overlap=true; appendOracleLedger(options,r); oracleUnknownDeadlineRows.insert(oracleActionId); oracleHaltedEvents.insert(oracleActionEvent);
         }
         if(oracleAction) oracleFastPollActive=true;
         else if(oracleHaltedEvents.count(oracleActionEvent)) oracleFastPollActive=false;
-        ++tick;
-        if(!options.control.empty()) {
+        // tick 是已进入的循环轮数；--ticks N 时达到 N 轮后在下一次条件检查退出。
+        ++tick;  
+
+//lzx-note 测试逻辑end===================================================================================================================================================================================================================================================================
+
+
+    //lzx-note 常驻逻辑--运行时控制开关 begin===================================================================================================================================================================================================================================================================
+
+        // 每轮刷新运行时控制（暂停、前台保护、临时 boost）；状态未知时后续写入会被关闸。
+        // 先判断是否配置了控制文件路径，控制文件是用来给服务运行期间动态暂停或保护应用的。
+        if(!options.control.empty()) {  //lzx-note-normal
             const std::string previousControlState=controlState;
             try {
-                control=parseControl(readPath(options.control));
-                controlState=control.paused?"paused":"active";
+                //读取控制文本，决定是否暂停，哪些应用需要保护，以及是否临时提高内存预留目标
+                control=parseControl(readPath(options.control));  //lzx-note-normal
+                controlState=control.paused?"paused":"active";  //lzx-note-normal
             } catch(const std::exception&) {
-                control=Control{}; controlState="unknown";
+                control=Control{}; controlState="unknown";  //lzx-note-normal
             }
             if(controlState!=previousControlState)
-                event(eventLog,"INFO","control","control state changed to "+controlState+"; sampling continues; writes gated by control");
+                event(eventLog,"INFO","control","control state changed to "+controlState+"; sampling continues; writes gated by control");  //lzx-note-normal
         }
-        System sys;
-        try { sys=systemSample(options.proc); }
-        catch(const std::exception& e) { ++samplingErrors; event(eventLog,"ERROR","system",e.what()); break; }
-        const Forecast forecast=predictor.update(sys,options.horizonSec,options.maxDeclineMBps*MiB);
-        tickDecision=ratioProfile?"ratio_profile_idle":"observation_only"; tickTarget.clear(); tickBudget=0;
-        actionThisTick=false;
-        Bytes controlBoost=0;
-        if(ratioProfile && controlState=="active" && control.until>unixSeconds()) controlBoost=control.boost;
-        const Bytes systemGap=deficit(options,sys,forecast,controlBoost);
+    //lzx-note 常驻逻辑--运行时控制开关 end===================================================================================================================================================================================================================================================================
+
+    //lzx-note 常驻逻辑--读取整机内存状态 begin===================================================================================================================================================================================================================================================================
+
+        //sys用来存放读取结果
+        System sys;  //lzx-note-normal
+        //systemSample() 读取 /proc/meminfo，填入整机的物理内存总量、可用内存、空闲内存、Swap 总量和剩余量等信息。
+        //它还会尝试读取 PSI 和 /proc/vmstat，但读取这些附加信息失败不会让这次整机采样失败
+        try { sys=systemSample(options.proc); }  //lzx-note-normal
+        catch(const std::exception& e) { ++samplingErrors; event(eventLog,"ERROR","system",e.what()); break; }  //lzx-note-normal
+    //lzx-note 常驻逻辑--读取整机内存状态 end===================================================================================================================================================================================================================================================================
+        
+    //lzx-note 常驻逻辑--预测可用内存 begin===================================================================================================================================================================================================================================================================
+        
+        //调用之前创建的 EWMA 趋势预测器 predictor，使用连续轮次的MemAvailable变化估算可用内存的短期趋势，并结合 horizonSec 预测一段时间后的可用量
+        const Forecast forecast=predictor.update(sys,options.horizonSec,options.maxDeclineMBps*MiB);  //lzx-note-normal
+    //lzx-note 常驻逻辑--预测可用内存 end===================================================================================================================================================================================================================================================================
+        
+        //ratio_profile_idle是开启提前回收，observation_only是只观察，不进行真的回收
+        tickDecision=ratioProfile?"ratio_profile_idle":"observation_only"; tickTarget.clear(); tickBudget=0;  //lzx-note-normal
+        actionThisTick=false;  //lzx-note-normal
+
+    //lzx-note 常驻逻辑--预留内存 begin===================================================================================================================================================================================================================================================================        
+        
+        Bytes controlBoost=0;  //lzx-note-normal
+        //将control.boost的值赋给controlBoost
+        if(ratioProfile && controlState=="active" && control.until>unixSeconds()) controlBoost=control.boost;  //lzx-note-normal
+    
+        //计算整机内存缺口--deficit分别计算两个缺口【可用内存缺口，空闲内存缺口】，再取较大者。
+        const Bytes systemGap=deficit(options,sys,forecast,controlBoost);  //lzx-note-normal
         bool hasMemPsi=false,hasIoPsi=false;
         std::string memoryPsi,ioPsi;
+        // 读取PSI
         if(fullObservationTick) {
             memoryPsi=rawPSI(options.proc+"/pressure/memory",hasMemPsi);
             ioPsi=rawPSI(options.proc+"/pressure/io",hasIoPsi);
         }
-        if(fullObservationTick) for(std::size_t appIndex=0;appIndex<config.apps.size();++appIndex) {
-            const auto& app=config.apps[appIndex];
+
+        // 遍历配置的应用组
+        if(fullObservationTick) for(std::size_t appIndex=0;appIndex<config.apps.size();++appIndex) {  //lzx-note-normal
+            const auto& app=config.apps[appIndex];  //lzx-note-normal
             try {
-                FD dir=openBeneath(root.get(),app.path);
-                const auto current=optionalRaw(dir.get(),"memory.current");
-                const auto stat=maybeAt(dir.get(),"memory.stat");
-                if(current.empty() || !stat) throw std::runtime_error("memory.current or memory.stat unreadable");
-                const auto values=parseVendorStat(*stat);
-                const auto ids=processIds(dir.get());
-                std::map<std::uint64_t,ProcStat> currentProcesses;
-                const auto processes=sampleProcesses(ids,previousProcesses[appIndex],currentProcesses);
-                previousProcesses[appIndex]=currentProcesses;
+                FD dir=openBeneath(root.get(),app.path);  //lzx-note-normal
+                const auto current=optionalRaw(dir.get(),"memory.current");  //lzx-note-normal
+                const auto stat=maybeAt(dir.get(),"memory.stat");  //lzx-note-normal
+                if(current.empty() || !stat) throw std::runtime_error("memory.current or memory.stat unreadable");  //lzx-note-normal
+                const auto values=parseVendorStat(*stat);  //lzx-note-normal
+                const auto ids=processIds(dir.get());  //lzx-note-normal
+                std::map<std::uint64_t,ProcStat> currentProcesses;  //lzx-note-normal
+                const auto processes=sampleProcesses(ids,previousProcesses[appIndex],currentProcesses);  //lzx-note-normal
+                previousProcesses[appIndex]=currentProcesses;  //lzx-note-normal
+    //lzx-note 常驻逻辑--预留内存 end===================================================================================================================================================================================================================================================================        
+  
+
+//lzx-note 测试逻辑begin===================================================================================================================================================================================================================================================================
             const Bytes residentAnonKiB=processes.rssAnonKiB.value_or(0);
             if(oracleProfile && app.reclaim && haveFeedback[appIndex]) {
                 const auto eventIt=oracleActiveEventForDonor.find(app.name);
@@ -2211,15 +2291,18 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                     control.protectedApps.count(app.name)?"runtime protected; observation only":
                     "process counters are diagnostics only; coldness/reclaim units unverified; budget unavailable";
             std::string action="none",budgetText,ratioText;
-            if(ratioProfile) {
-                reason=app.reclaim?"ratio profile awaiting EWMA warmup":"app is not explicitly reclaim-enabled";
-                if(controlState!="active") reason="control is not confirmed active";
-                else if(!app.reclaim) reason="app is not explicitly reclaim-enabled";
-                else if(control.protectedApps.count(app.name)) reason="app protected by runtime control";
-                else if(!processes.rssAnonKiB || !processes.vmSwapKiB || processes.listed==0 || processes.statusRead!=processes.listed) reason="process telemetry incomplete";
-                else if(tick<2 || monotonic()-daemonStart<options.warmupSec) reason="EWMA/startup warmup";
-                else if(monotonic()<nextProbeAction) reason="probe cooldown";
-                else if(actionThisTick) reason="one reclaim action per interval";
+//lzx-note 测试逻辑end===================================================================================================================================================================================================================================================================
+            
+
+            if(ratioProfile) {  //lzx-note-normal
+                reason=app.reclaim?"ratio profile awaiting EWMA warmup":"app is not explicitly reclaim-enabled";  //lzx-note-normal
+                if(controlState!="active") reason="control is not confirmed active";  //lzx-note-normal
+                else if(!app.reclaim) reason="app is not explicitly reclaim-enabled";  //lzx-note-normal
+                else if(control.protectedApps.count(app.name)) reason="app protected by runtime control";  //lzx-note-normal
+                else if(!processes.rssAnonKiB || !processes.vmSwapKiB || processes.listed==0 || processes.statusRead!=processes.listed) reason="process telemetry incomplete";  //lzx-note-normal
+                else if(tick<2 || monotonic()-daemonStart<options.warmupSec) reason="EWMA/startup warmup";  //lzx-note-normal
+                else if(monotonic()<nextProbeAction) reason="probe cooldown";  //lzx-note-normal
+                else if(actionThisTick) reason="one reclaim action per interval";  //lzx-note-normal
                 else if(appProbeMinute[appIndex].used(monotonic())>=options.appPerMinute ||
                         globalProbeMinute.used(monotonic())>=options.perMinute) reason="ratio profile per-minute cap reached";
                 else if(systemGap==0) {
@@ -2227,67 +2310,67 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                         reason="protected: app_score/oom_score_adj/member identity does not confirm background eligibility";
                     else reason="forecast reserve satisfied";
                 }
-                else {
+                else {  //lzx-note-normal
                     try {
                         std::optional<ProbeIdentity> probeIdentity;
                         if(probeProfile) probeIdentity=validateProbe(dir.get(),options.root,app.path);
                         else if(!backgroundEligible(dir.get(),app.path,ids,currentProcesses))
                             throw std::runtime_error("app_score/oom_score_adj/member identity does not confirm background eligibility");
-                        if(!values.anonKiB) throw std::runtime_error("vendor Anon telemetry unavailable");
-                        const Bytes residentAnon=*processes.rssAnonKiB*1024;
-                        const Bytes ratioDenominator=*values.anonKiB*1024;
-                        const Bytes donorAnon=std::min(ratioDenominator,residentAnon);
-                        const Bytes keep=std::max(app.keep,KeepSlack);
-                        const Bytes cap=std::min({systemGap,sub(donorAnon,keep),
-                            options.batch,sub(options.appPerMinute,appProbeMinute[appIndex].used(monotonic())),
-                            sub(options.perMinute,globalProbeMinute.used(monotonic()))});
-                        const Bytes safeCap=sub(cap,KeepSlack);
-                        budgetText=std::to_string(safeCap);
-                        const unsigned ratio=ratioForBudget(safeCap,ratioDenominator);
-                        ratioText=std::to_string(ratio);
-                        const Bytes nominalRequest=(ratioDenominator*ratio)/100;
-                        if(ratio<1) reason="budget below one-percent ratio quantum";
-                        else if(nominalRequest<options.minBatch) reason="nominal request below configured min_batch";
+                        if(!values.anonKiB) throw std::runtime_error("vendor Anon telemetry unavailable");  //lzx-note-normal
+                        const Bytes residentAnon=*processes.rssAnonKiB*1024;  //lzx-note-normal
+                        const Bytes ratioDenominator=*values.anonKiB*1024;  //lzx-note-normal
+                        const Bytes donorAnon=std::min(ratioDenominator,residentAnon);  //lzx-note-normal
+                        const Bytes keep=std::max(app.keep,KeepSlack);  //lzx-note-normal
+                        const Bytes cap=std::min({systemGap,sub(donorAnon,keep),  //lzx-note-normal
+                            options.batch,sub(options.appPerMinute,appProbeMinute[appIndex].used(monotonic())),  //lzx-note-normal
+                            sub(options.perMinute,globalProbeMinute.used(monotonic()))});  //lzx-note-normal
+                        const Bytes safeCap=sub(cap,KeepSlack);  //lzx-note-normal
+                        budgetText=std::to_string(safeCap);  //lzx-note-normal
+                        const unsigned ratio=ratioForBudget(safeCap,ratioDenominator);  //lzx-note-normal
+                        ratioText=std::to_string(ratio);  //lzx-note-normal
+                        const Bytes nominalRequest=(ratioDenominator*ratio)/100;  //lzx-note-normal
+                        if(ratio<1) reason="budget below one-percent ratio quantum";  //lzx-note-normal
+                        else if(nominalRequest<options.minBatch) reason="nominal request below configured min_batch";  //lzx-note-normal
                         else if(probeProfile && !sameProbe(dir.get(),options.root,app.path,*probeIdentity)) reason="probe PID identity changed before write";
                         else if(!probeProfile && !backgroundEligible(dir.get(),app.path,ids,currentProcesses)) reason="background eligibility or member identity changed before write";
                         else {
-                            Control latest=parseControl(readPath(options.control));
-                            if(latest.paused || latest.protectedApps.count(app.name)) reason="control pause/protection changed before write";
+                            Control latest=parseControl(readPath(options.control));  //lzx-note-normal
+                            if(latest.paused || latest.protectedApps.count(app.name)) reason="control pause/protection changed before write";  //lzx-note-normal
                             else {
-                                FD writer(::openat(dir.get(),"memory.force_shrink_anon",O_WRONLY|O_CLOEXEC|O_NOFOLLOW));
-                                if(writer.get()<0) throw error("open memory.force_shrink_anon");
-                                const std::string payload=std::to_string(ratio);
-                                const auto started=monotonic();
-                                const auto count=::write(writer.get(),payload.data(),payload.size());
-                                const int writeErr=count<0?errno:0;
-                                const auto elapsed=(monotonic()-started)*1000;
+                                FD writer(::openat(dir.get(),"memory.force_shrink_anon",O_WRONLY|O_CLOEXEC|O_NOFOLLOW));  //lzx-note-normal
+                                if(writer.get()<0) throw error("open memory.force_shrink_anon");  //lzx-note-normal
+                                const std::string payload=std::to_string(ratio);  //lzx-note-normal
+                                const auto started=monotonic();  //lzx-note-normal
+                                const auto count=::write(writer.get(),payload.data(),payload.size());  //lzx-note-normal
+                                const int writeErr=count<0?errno:0;  //lzx-note-normal
+                                const auto elapsed=(monotonic()-started)*1000;  //lzx-note-normal
                                 if(count!=static_cast<ssize_t>(payload.size())) {
-                                    action="write_error"; reason="vendor write failed errno="+std::to_string(writeErr);
-                                    nextProbeAction=monotonic()+60.0; tickDecision="ratio_write_error";
+                                    action="write_error"; reason="vendor write failed errno="+std::to_string(writeErr);  //lzx-note-normal
+                                    nextProbeAction=monotonic()+60.0; tickDecision="ratio_write_error";  //lzx-note-normal
                                 } else {
-                                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                                    appProbeMinute[appIndex].charge(monotonic(),safeCap);
-                                    globalProbeMinute.charge(monotonic(),safeCap);
-                                    nextProbeAction=monotonic()+std::max(10.0,options.cooldownSec);
-                                    tickDecision="ratio_submitted"; tickTarget=app.name; tickBudget=safeCap; actionThisTick=true;
-                                    action="accepted_ratio_"+payload;
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(250));  //lzx-note-normal
+                                    appProbeMinute[appIndex].charge(monotonic(),safeCap);  //lzx-note-normal
+                                    globalProbeMinute.charge(monotonic(),safeCap);  //lzx-note-normal
+                                    nextProbeAction=monotonic()+std::max(10.0,options.cooldownSec);  //lzx-note-normal
+                                    tickDecision="ratio_submitted"; tickTarget=app.name; tickBudget=safeCap; actionThisTick=true;  //lzx-note-normal
+                                    action="accepted_ratio_"+payload;  //lzx-note-normal
                                     try {
-                                        const auto postPids=processIds(dir.get());
+                                        const auto postPids=processIds(dir.get());  //lzx-note-normal
                                         if(postPids!=ids || (probeProfile?!sameProbe(dir.get(),options.root,app.path,*probeIdentity):
                                            !backgroundEligible(dir.get(),app.path,ids,currentProcesses)))
-                                            throw std::runtime_error("post-write process identity or background eligibility changed");
-                                        const auto postAnon=aggregateRssAnon(ids);
-                                        if(!postAnon) throw std::runtime_error("post-write aggregate proc telemetry incomplete");
-                                        const Bytes beforeAnon=*processes.rssAnonKiB;
-                                        const Bytes observedDrop=beforeAnon>*postAnon?(beforeAnon-*postAnon)*1024:0;
-                                        lastFeedbackAnonKiB[appIndex]=*postAnon; haveFeedback[appIndex]=true;
-                                        std::ostringstream elapsedText; elapsedText<<std::fixed<<std::setprecision(3)<<elapsed;
-                                        reason="write_ms="+elapsedText.str()+"; planned_bytes="+budgetText+"; observed_rssanon_drop_bytes="+std::to_string(observedDrop)+" (diagnostic only)";
-                                        event(eventLog,"INFO",app.name,"probe reclaim accepted ratio="+payload+" planned_bytes="+budgetText+" observed_rssanon_drop_bytes="+std::to_string(observedDrop));
+                                            throw std::runtime_error("post-write process identity or background eligibility changed");  //lzx-note-normal
+                                        const auto postAnon=aggregateRssAnon(ids);  //lzx-note-normal
+                                        if(!postAnon) throw std::runtime_error("post-write aggregate proc telemetry incomplete");  //lzx-note-normal
+                                        const Bytes beforeAnon=*processes.rssAnonKiB;  //lzx-note-normal
+                                        const Bytes observedDrop=beforeAnon>*postAnon?(beforeAnon-*postAnon)*1024:0;  //lzx-note-normal
+                                        lastFeedbackAnonKiB[appIndex]=*postAnon; haveFeedback[appIndex]=true;  //lzx-note-normal
+                                        std::ostringstream elapsedText; elapsedText<<std::fixed<<std::setprecision(3)<<elapsed;  //lzx-note-normal
+                                        reason="write_ms="+elapsedText.str()+"; planned_bytes="+budgetText+"; observed_rssanon_drop_bytes="+std::to_string(observedDrop)+" (diagnostic only)";  //lzx-note-normal
+                                        event(eventLog,"INFO",app.name,"probe reclaim accepted ratio="+payload+" planned_bytes="+budgetText+" observed_rssanon_drop_bytes="+std::to_string(observedDrop));  //lzx-note-normal
                                     } catch(const std::exception& e) {
-                                        reason="write accepted; feedback unknown: "+std::string(e.what());
-                                        nextProbeAction=monotonic()+60.0;
-                                        event(eventLog,"WARN",app.name,reason);
+                                        reason="write accepted; feedback unknown: "+std::string(e.what());  //lzx-note-normal
+                                        nextProbeAction=monotonic()+60.0;  //lzx-note-normal
+                                        event(eventLog,"WARN",app.name,reason);  //lzx-note-normal
                                     }
                                 }
                             }
@@ -2301,7 +2384,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                 }
             }
             if(action!="none") { tickDecision=action; tickTarget=app.name; }
-            appLog.row({std::to_string(unixMillis()),Schema,app.name,app.path,appPopulated(dir.get()),current,
+            appLog.row({std::to_string(unixMillis()),Schema,app.name,app.path,appPopulated(dir.get()),current,  //lzx-note-normal
                     "unknown_unverified",optionalNumber(values.anonKiB),optionalNumber(values.zramKiB),optionalNumber(values.eswapKiB),
                     rawCounter(*stat,"inactive_anon"),rawCounter(*stat,"inactive_file"),optionalRaw(dir.get(),"memory.anon_refault"),
                     std::to_string(processes.listed),std::to_string(processes.statusRead),std::to_string(processes.smapsRead),
@@ -2317,9 +2400,12 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                 event(eventLog,"WARN",app.name,e.what());
             }
         }
+        // 记下下一次完整采样时间；Oracle 活动时的快速轮询不必每次都重采全部应用。
         if(fullObservationTick) nextFullObservation=std::chrono::steady_clock::now()+std::chrono::milliseconds(options.intervalMs);
         const double oracleSubmitInterval=options.oracleProfile=="peak_transition_os_snapshot"
             ?static_cast<double>(options.oracleProfileActionIntervalMs)/1000.0:1.0;
+        // Oracle profile 读取外部事件计划、核验身份和时限，并可能排队独立异步动作。
+        // 这是测试专用路径，与普通 harmony-v1 观察循环不是同一套策略。
         if(oracleProfile && !oracleAction &&
            (oracleFastPollActive || monotonic()-lastOracleSubmit>=oracleSubmitInterval)) {
             try {
@@ -2619,7 +2705,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                 }
             } catch(const std::exception& e) { event(eventLog,"ERROR","oracle_schedule",e.what()); }
         }
-        if(fullObservationTick) systemLog.row({std::to_string(unixMillis()),Schema,std::to_string(sys.total),std::to_string(sys.available),
+        if(fullObservationTick) systemLog.row({std::to_string(unixMillis()),Schema,std::to_string(sys.total),std::to_string(sys.available),  //lzx-note-normal
             std::to_string(sys.free),std::to_string(sys.swapTotal),std::to_string(sys.swapFree),
             std::to_string(forecast.predictedAvailable),std::to_string(static_cast<long long>(forecast.declineBytesPS)),
             memoryPsi,hasMemPsi?"present_unverified":"unknown",ioPsi,hasIoPsi?"present_unverified":"unknown",
@@ -2630,11 +2716,12 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
             options.oracleProfilePollIntervalMs,static_cast<unsigned>(options.intervalMs));
         deadline+=std::chrono::milliseconds(loopIntervalMs);
         if(deadline<std::chrono::steady_clock::now()) deadline=std::chrono::steady_clock::now();
-        while(!stopping() && std::chrono::steady_clock::now()<deadline) {
+        while(!stopping() && std::chrono::steady_clock::now()<deadline) {  //lzx-note-normal
             const auto remain=deadline-std::chrono::steady_clock::now();
-            std::this_thread::sleep_for(std::min(remain,std::chrono::duration_cast<decltype(remain)>(std::chrono::milliseconds(100))));
+            std::this_thread::sleep_for(std::min(remain,std::chrono::duration_cast<decltype(remain)>(std::chrono::milliseconds(100))));  //lzx-note-normal
         }
     }
+    // 循环结束后记录退出原因；若 Oracle 异步任务仍在运行，等待其返回并落账再退出。
     event(eventLog,"INFO","daemon",stopping()?"stopped by SIGINT/SIGTERM":"observation finished");
     if(oracleAction) {
         try { const auto result=oracleAction->get(); appendOracleLedger(options,result); event(eventLog,"INFO",result.bundle,"oracle final ledger action_id="+result.actionId+" status="+result.status+" overlap="+(result.overlap?"true":"false")); }
