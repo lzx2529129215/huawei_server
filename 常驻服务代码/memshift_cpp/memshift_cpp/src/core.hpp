@@ -119,13 +119,33 @@ struct Options {
     std::string root = "/sys/fs/cgroup", proc = "/proc";
     std::string logs = "./logs", lock = "./memshiftd.lock", control = "";
     bool oracleMode = false;
+    bool oracleKnownFutureFreeOnly = false; // Oracle-only perfect-event experiment; default unchanged.
+    bool dailyAsync = false; // Explicit non-oracle opt-in; legacy daily path stays default.
+    double dailyKnownLeadSec = 35; // Event admission horizon only; dynamic proof TTL stays 2.5s.
+    bool dailyKnownCapacity = false; // Explicit known-owned capacity experiment, never an office/default floor.
+    bool dailyKnownStrength = false; // Opt-in known/owned preparation60, paired disk, successful return spacing.
+    bool dailyKnownFutureFreeOnly = false; // Explicit ideal registered-event input; daily executor unchanged.
+    std::string dailyKnownPlan, dailyKnownLedger;
+    bool dailyRecentReserve = false; // Device-observed global consumption proxy; default off.
+    double dailyRecentWindowSec = 30, dailyRecentHoldSec = 60, dailyRecentCapFraction = 0.5;
+    bool dailyOwnedOsSnapshot = false; // Explicit owned-only anonymous qualification; disk remains independently gated.
+    std::string dailyDiskMode = "off"; // off / observe / owned_apply; never enables office-app disk commands.
+    Bytes dailyDiskWholeWork = 0; // Logical whole work plus margin; not a physical IO limit.
+    std::uint64_t dailyMaxSubmissions = 0; // Non-oracle worker lifetime limit; 0 preserves unlimited admission.
     std::string oracleProfile = "legacy_two_donor";
     std::string oracleBackend = "force_shrink_all";
     bool oracleBackendExplicit = false;
+    bool oracleDiskPrepareAnon = false;
+    bool oracleDeferSmaps = false;
+    unsigned harmonySmapsIntervalMs = 0; // 0 preserves detailed sampling on every full observation.
     std::string oracleSchedule = "", oracleLedger = "";
+    std::string oracleProofSource = "legacy", oraclePlan = "";
     Bytes oracleBatch = 512*MiB, oracleGlobalCap = 4096*MiB, oracleCaseCap = 4096*MiB, oracleAppCap = 2048*MiB;
     // Cumulative-watermark mode only; legacy oracle keeps its 512 MiB floor.
     Bytes oracleCumulativeKeep = 512*MiB;
+    // Optional lower total-RSS floor, honored only for explicitly device-proven
+    // owned donors in the fixed peak-transition profile. Default stays legacy.
+    Bytes oracleDeviceDonorTotalKeep = 512*MiB;
     unsigned oracleMaxRatio = 30;
     // Experimental oracle-only interpretation. The default preserves the
     // established resident-relative request behavior.
@@ -149,12 +169,17 @@ struct App {
     // Opt-in: a missing/false reclaim flag never makes this app a donor.
     bool reclaim = false;
     Bytes keep = 256*MiB;
+    // WPS PC window-state exception; never inferred from a nonpositive OOM score.
+    bool wpsWindowGate = false;
 };
 struct System {
     double time = 0;
     Bytes total = 0, available = 0, free = 0, cached = 0, dirty = 0, swapTotal = 0, swapFree = 0;
     Bytes zswap = 0, zswapped = 0, pswpin = 0, pswpout = 0;
     PSI mem, io;
+    std::optional<Bytes> writebackBytes, anonPagesBytes, shmemBytes;
+    // Diagnostic-only raw firmware counter; no policy or OOM attribution.
+    std::optional<Bytes> oomKillCnt;
 };
 struct Sample {
     bool valid = false;
@@ -251,6 +276,20 @@ inline Budget donorBudget(const Options& o, const App& app, const Features& f,
 }
 inline Bytes deficit(const Options& o, const System& s, const Forecast& f, Bytes boost) {
     return std::max(sub(add(o.reserve,boost),f.predictedAvailable),sub(o.readyFree,s.free));
+}
+// Perfect-event experiment: the known net increment is not a trend forecast.
+inline Bytes oracleEventFreeTarget(const Options& o, Bytes knownNetIncrement) {
+    if(!o.oracleKnownFutureFreeOnly) return o.readyFree;
+    if(!knownNetIncrement || knownNetIncrement>std::numeric_limits<Bytes>::max()-o.reserve)
+        throw std::runtime_error("oracle_known_future_target_invalid_or_overflow");
+    return knownNetIncrement+o.reserve;
+}
+inline Bytes oracleEventGap(const Options& o, const System& s, const Forecast& f, Bytes knownNetIncrement) {
+    if(!o.oracleKnownFutureFreeOnly) return deficit(o,s,f,knownNetIncrement);
+    const Bytes target=oracleEventFreeTarget(o,knownNetIncrement);
+    if(!s.total || s.free>s.total || target>s.total)
+        throw std::runtime_error("oracle_known_future_target_or_system_outside_memtotal");
+    return sub(target,s.free);
 }
 inline std::string pressureBlock(const Options& o, const System& s,
                                  double recentIO, double recentMemFull) {

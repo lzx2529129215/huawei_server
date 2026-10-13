@@ -778,6 +778,19 @@ def main() -> int:
             "ce1f1898c473e161f99356898c4f9ecff33ccabd9580e396d25bd70c1f954e23",
             "e04b8a2ae0bcce2a22c9decf75198b1c8c679a876810a6be204473a9ebbd60c6",
             "93a8b99365551273f550131b2c03c69ca7c360a40d56c05c963e154dd0b08740",
+            "4ed88c12e30baf552526230c1eada7cdcddd6d77fcc67b54e88b65c0ac4787f7",
+            "4ffca18401d4927da48465110977df3ef942a883480723d0ac7ece9f0a5b0a48",
+            "15fd753a9a1a3ada647be495e8c0d32e066abe19b52659c45c5da6109387d277",
+            "9fef955ea9165114cfaffd02b0fcb7b0f75e65cee21b18a11bc47973d48b8d8b",
+            "a73d00e8a206718de822a7231d3e1c0cf1f0ba70f01951b5f0c0137f3bbece1a",
+            "003d212c05601912f1d194633578716ad8fc9fc59f6ff9d09a147791b80641c5",
+            "1915eeacdecd107239158bb4d9f84f1d3b7bfb88ac2ba2a54b3c03548cd8975c",
+            "4f1ea68dedf34787d6a41cce4b7447ae611899ae251458d294d71e4c7fafdcd9",
+            "bb429fed27af673c536e192fa06248de35e0c3184e75393c3bec82ce71f9b487",
+            "e010f93ffd830dd450448e9969b6196ecc85049b5bdcc05920bd224d95e5ab91",
+            "5032ddb7f9becfc679b54179dd4f00f1d6a30396a5e10487db9c12b13a79a8d7",
+            "080a55e4e3c79b5ec2ca81214f2586c00953fe37da9bf76e91eed072d44dfdf1",
+            "13d581600a48c2ce288ef26794d0943611639361494552150679ec16bf48567d",
         }:
             raise RuntimeError("daemon binary hash is not a reviewed timing-V3 artifact")
         template = Path(args.config_template)

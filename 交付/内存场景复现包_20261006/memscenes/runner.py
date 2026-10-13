@@ -17,6 +17,8 @@ from copy import deepcopy
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from .device import Device, quote, ui_nodes, focused_bundles
+from .kernel_capture import DeviceDmesgReader
+from .scene4_roles import memory_roles
 from .model import (ORDER, GIB, EventBook, canonical_hash, key_values,
                     fault_delta, disk_bytes, eswap_bytes, json_lines, combination_checks,
                     release_precedes_reuse, daily_promotion_targets, attempt_outcome,
@@ -356,11 +358,13 @@ def _scene4_legacy_v3_window(session: "Session", case_id: str,
     backend = cfg.get("oracle_backend")
     if cfg.get("execution_profile") != "legacy_peak_transition" or \
             cfg.get("oracle_profile") != "peak_transition_os_snapshot" or \
-            backend not in {"proc_file_writeback", "force_shrink_all"}:
+            backend not in {"proc_file_writeback", "force_shrink_all", "force_swapout"}:
         raise ValueError("legacy peak-transition route requires an explicit supported OS-snapshot backend")
     schema_version = 3 if backend == "proc_file_writeback" else 2
-    if schema_version == 2 and cfg.get("oracle_ratio_semantics") != "cumulative_anon_watermark":
+    if backend == "force_shrink_all" and cfg.get("oracle_ratio_semantics") != "cumulative_anon_watermark":
         raise ValueError("schema2 force_shrink_all route requires cumulative_anon_watermark semantics")
+    if backend == "force_swapout" and cfg.get("oracle_ratio_semantics") != "resident_incremental":
+        raise ValueError("force_swapout is a whole-pool command and cannot use cumulative ratio semantics")
     schedule_remote = str(cfg.get("oracle_schedule_remote_path", "")).strip()
     ledger_remote = str(cfg.get("oracle_ledger_remote_path", "")).strip()
     if not schedule_remote or not ledger_remote:
@@ -375,11 +379,12 @@ def _scene4_legacy_v3_window(session: "Session", case_id: str,
     control = _scene4_control_readback(session, schedule_remote)
     if not control.get("verified"):
         raise RuntimeError("legacy peak-transition service control readback did not match requested A/B phase")
-    needed = int(cfg.get("planned_needed_bytes", len(bundles) *
-        (int(peak_mib) - int(daily_mib)) * 1024**2))
-    exact_needed = len(bundles) * (int(peak_mib) - int(daily_mib)) * 1024**2
+    roles = memory_roles(cfg, bundles, peak_mib, int(cfg.get("daily_file_mib", 0)))
+    candidate_bundles = roles["reclaim_candidates"]
+    exact_needed = roles["incremental_bytes"]
+    needed = int(cfg.get("planned_needed_bytes", exact_needed))
     if needed != exact_needed or needed <= 0:
-        raise ValueError("legacy profile planned bytes must equal eight-app incremental peak demand")
+        raise ValueError("legacy profile planned bytes must equal registered peak-target incremental demand")
     event_id = f"{case_id}_peak_transition"
     suffix = f"v{schema_version}"
     local_path = session.output / f"oracle_schedule_{suffix}.tsv"
@@ -424,7 +429,7 @@ def _scene4_legacy_v3_window(session: "Session", case_id: str,
                 snapshot_host_start_ns = time.monotonic_ns()
                 with writer_lock:
                     writer_state["snapshot_inflight"] = True
-                obs = _scene4_legacy_os_snapshot(session, case_id, daily_records, bundles)
+                obs = _scene4_legacy_os_snapshot(session, case_id, daily_records, candidate_bundles)
                 snapshot_host_end_ns = time.monotonic_ns()
                 snapshot_interval = {"round": writer_state.get("rounds", 0) + 1,
                     "host_start_monotonic_ns": snapshot_host_start_ns,
@@ -450,7 +455,7 @@ def _scene4_legacy_v3_window(session: "Session", case_id: str,
                 by_bundle = obs["donors"]
                 if frozen_donors is None:
                     selected = []
-                    for bundle in bundles:
+                    for bundle in candidate_bundles:
                         item = by_bundle.get(bundle)
                         if not item or not item.get("identity_verified") or \
                                 item.get("aa_state") != "BACKGROUND" or \
@@ -2473,6 +2478,10 @@ class Session:
             raise RuntimeError("frame capture is Scene4-only")
         if case_id in self.scene4_frame_workers:
             raise RuntimeError(f"Scene4 frame worker already exists for {case_id}")
+        capture_backend = self.config.get("scene4", {}).get("frame_capture_backend", "uitest_png")
+        if capture_backend not in ("uitest_png", "snapshot_display_jpeg"):
+            raise ValueError("unsupported Scene4 frame capture backend")
+        capture_suffix = ".jpeg" if capture_backend == "snapshot_display_jpeg" else ".png"
         ui_dir = self.output / "ui"
         frame_dir = ui_dir / "frames"
         frame_dir.mkdir(parents=True, exist_ok=True)
@@ -2728,10 +2737,15 @@ class Session:
                     slot = next_slot
                 frame_id = f"{self.id}:{case_id}:{slot:06d}"
                 remote_png = _scene4_frame_remote_path(self.remote, self.id, case_id, slot)
+                if capture_backend == "snapshot_display_jpeg":
+                    remote_png = remote_png[:-4] + capture_suffix
+                    capture_command = "snapshot_display -f " + quote(remote_png) + " -w 1560 -h 1040"
+                else:
+                    capture_command = "uitest screenCap -p " + quote(remote_png)
                 host_capture_start = time.monotonic_ns()
                 marker = f"__S4_CAP_{slot:06d}_"
                 command = ("echo " + quote(marker + "CLOCK_PRE__") + "; " + quote(clock_path) + "; "
-                    "uitest screenCap -p " + quote(remote_png) + "; echo " + quote(marker + "EXIT__") + "$?; "
+                    + capture_command + "; echo " + quote(marker + "EXIT__") + "$?; "
                     "echo " + quote(marker + "CLOCK_POST__") + "; " + quote(clock_path))
                 capture_error = None
                 try:
@@ -2754,6 +2768,8 @@ class Session:
                     "capture_boottime_pre_s": pre_boot, "capture_boottime_post_s": post_boot,
                     "capture_clock_valid": captured, "capture_exit_code": exit_code,
                     "capture_status": "captured" if captured else "capture_failed",
+                    "capture_backend": capture_backend,
+                    "requested_resolution": [1560, 1040] if capture_backend == "snapshot_display_jpeg" else None,
                     "capture_error": capture_error, "capture_raw_path": None,
                     "capture_raw": capture_raw, "transfer_status": "not_attempted",
                     "frame_sha256": None, "frame_bytes": None, "local_path": None,
@@ -2771,10 +2787,11 @@ class Session:
                         if not temp_path.is_file():
                             raise RuntimeError("screenCap file receive did not create local file")
                         blob = temp_path.read_bytes()
-                        if not blob.startswith(b"\x89PNG\r\n\x1a\n"):
-                            raise RuntimeError("received frame lacks PNG signature")
+                        valid_signature = (blob.startswith(b"\xff\xd8\xff") and blob.endswith(b"\xff\xd9")) if capture_suffix == ".jpeg" else blob.startswith(b"\x89PNG\r\n\x1a\n")
+                        if not valid_signature:
+                            raise RuntimeError("received frame lacks expected image signature")
                         digest = hashlib.sha256(blob).hexdigest()
-                        final_path = state["frame_dir"] / f"{digest}.png"
+                        final_path = state["frame_dir"] / f"{digest}{capture_suffix}"
                         if final_path.exists():
                             temp_path.unlink()
                         else:
@@ -2873,7 +2890,8 @@ class Session:
                 state.setdefault("secondary_errors", []).append("readonly_observation_worker_join_timeout")
         cleanup = {"attempted": False, "verified_absent": False}
         if thread and not thread.is_alive():
-            remote_glob = self.remote + f"/scene4_{self.id}_{case_id}_frame_*.png"
+            suffix = ".jpeg" if self.config.get("scene4", {}).get("frame_capture_backend") == "snapshot_display_jpeg" else ".png"
+            remote_glob = self.remote + f"/scene4_{self.id}_{case_id}_frame_*{suffix}"
             cleanup["attempted"] = True
             cleanup["raw"] = self.device.shell("rm -f " + remote_glob +
                 "; if ls " + remote_glob + " >/dev/null 2>&1; then echo present; else echo absent; fi",
@@ -3205,6 +3223,25 @@ class Session:
 
     def start_kernel_dmesg_reader(self) -> None:
         """Keep an owned dmesg -W reader alive for this session's case markers."""
+        backend = self.config.get("scene4", {}).get("kernel_capture_backend", "hdc_stream") if self.scene == 4 else "hdc_stream"
+        if backend == "device_local":
+            if self.config["scene4"].get("execution_profile") != "legacy_peak_transition":
+                raise ValueError("device-local capture currently requires legacy Scene4 profile")
+            segment = len(self.kernel_dmesg_reader.setdefault("segments", []))
+            process = DeviceDmesgReader(self.device, self.remote, segment)
+            self.kernel_dmesg_process = process
+            row = {"index": segment, "started": process.poll() is None,
+                   "device_pid": process.pid, "start_ticks": process.start_ticks,
+                   "backend": backend, "remote_command": "nohup dmesg -W",
+                   "remote_raw": process.raw_path, "remote_stderr": process.stderr_path,
+                   "stderr": str(self.output / f"kernel_dmesg_reader_{segment}.stderr.log")}
+            self.kernel_dmesg_reader["segments"].append(row)
+            self.kernel_dmesg_reader.update(row)
+            if not row["started"]:
+                raise RuntimeError("device-local kernel reader exited before case start")
+            return
+        if backend != "hdc_stream":
+            raise ValueError("unsupported kernel capture backend")
         self.kernel_dmesg_stream = self.kernel_dmesg_path.open("ab", buffering=0)
         segment = len(self.kernel_dmesg_reader.setdefault("segments", []))
         stderr_path = self.output / f"kernel_dmesg_reader_{segment}.stderr.log"
@@ -3423,6 +3460,8 @@ class Session:
         end_token = f"MEMSCENES_CASE_END session={self.id} case_id={case_id} "
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
+            if isinstance(self.kernel_dmesg_process, DeviceDmesgReader):
+                self.kernel_dmesg_process.collect(path, Path(self.kernel_dmesg_reader["stderr"]))
             if path.exists() and end_token in path.read_text(encoding="utf-8", errors="replace"):
                 break
             if not self.kernel_dmesg_process or self.kernel_dmesg_process.poll() is not None:
@@ -3465,6 +3504,8 @@ class Session:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+        if isinstance(process, DeviceDmesgReader):
+            process.collect(self.kernel_dmesg_path, Path(self.kernel_dmesg_reader["stderr"]))
         if self.kernel_dmesg_stream and not self.kernel_dmesg_stream.closed:
             self.kernel_dmesg_stream.close()
         if self.kernel_dmesg_stderr and not self.kernel_dmesg_stderr.closed:
@@ -4349,7 +4390,8 @@ def validate_environment(session: Session, formal: bool = False) -> dict:
             raise RuntimeError("场景4日常文件映射与匿名页总量必须精确构成daily目标")
         if not 1 <= int(cfg.get("calibration_hold_seconds", 0)) < int(cfg["lifetime_seconds"]):
             raise RuntimeError("场景4单app校准hold必须为正且小于设备TTL")
-        daily_total = sum(int(case["daily_mib"]) for case in cases[:1]) * apps * 1024**2
+        daily_total = memory_roles(cfg, session.config["test_apps"],
+            cases[0]["peak_mib"], cases[0].get("file_mib", 0))["daily_total_mib"] * 1024**2
         for case in cases:
             if not 0 <= case["daily_mib"] <= case["peak_mib"] <= memtotal // (1024**2):
                 raise RuntimeError("场景4单app daily/peak必须不超过本机MemTotal")
@@ -4359,7 +4401,10 @@ def validate_environment(session: Session, formal: bool = False) -> dict:
                 raise RuntimeError("场景4每个用例的file_mib必须匹配daily_file_mib")
             if not 0 <= case["hold_seconds"] < cfg["lifetime_seconds"]:
                 raise RuntimeError("场景4用例hold必须小于设备TTL")
-            case_peak_total = int(case["peak_mib"]) * apps * 1024**2
+            roles = memory_roles(cfg, session.config["test_apps"], case["peak_mib"], case.get("file_mib", 0))
+            if any(x["peak_mib"] * 1024**2 > memtotal for x in roles["per_app"].values()):
+                raise RuntimeError("Scene4 per-role peak exceeds measured MemTotal")
+            case_peak_total = roles["peak_total_mib"] * 1024**2
             case_ratio = case_peak_total / memtotal if memtotal else 0
             if not float(cfg["combined_peak_floor_ratio"]) <= case_ratio <= float(cfg["combined_peak_ceiling_ratio"]):
                 raise RuntimeError(f"场景4用例{case['kind']}组合peak/MemTotal比例不在限制内：{case_ratio:.3f}")
@@ -4640,6 +4685,20 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
     scene4_v3_profile = (session.scene == 4 and
         cfg.get("execution_profile") == "legacy_peak_transition" and
         cfg.get("oracle_profile") == "peak_transition_os_snapshot")
+    roles = memory_roles(cfg, bundles, peak, file_mib) if session.scene == 4 else None
+    peak_targets = roles["peak_targets"] if roles else bundles
+    background_donors = roles["donors"] if roles else []
+    measurement_command_timeout = d.command_timeout
+    if scene4_v3_profile:
+        preparation_timeout = float(cfg.get("preparation_read_timeout_seconds", measurement_command_timeout))
+        if not 8 <= preparation_timeout <= 30:
+            raise ValueError("Scene4 preparation read timeout must be between 8 and 30 seconds")
+        # Only pre-registration preparation gets a longer transport allowance.
+        # The fixed oracle/peak window below retains its original timeout.
+        d.command_timeout = preparation_timeout
+        session.result.setdefault("scene4_preparation_transport", []).append({
+            "case_id": case_id, "preparation_timeout_seconds": preparation_timeout,
+            "measurement_timeout_seconds": measurement_command_timeout})
     session.owned_page_files.update((bundle, case_id) for bundle in bundles)
     popup_baseline = None
     try:
@@ -4765,7 +4824,8 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                 identity["last_seen_uptime"] = uptime
     def launch(bundle):
         try:
-            session.launch_test(bundle, case_id, cfg["daily_mib"], peak, hold,
+            app_memory = roles["per_app"][bundle] if roles else {"daily_mib": cfg["daily_mib"], "peak_mib": peak}
+            session.launch_test(bundle, case_id, app_memory["daily_mib"], app_memory["peak_mib"], hold,
                                 cfg["lifetime_seconds"], file_mib=file_mib,
                                 seed=seed, await_peak=True,
                                 no_periodic_msync=bool(cfg.get("oracle_file_dirty_variant", False)))
@@ -5019,9 +5079,15 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
     dirty_prepare_complete = True
     if daily_barrier_complete and scene4_v3_profile and bool(cfg.get("oracle_file_dirty_variant", False)):
         try:
-            dirty_prepare_result = _scene4_dirty_prepare(
-                session, case_id, bundles,
+            redirty_required = bool(cfg.get("oracle_prepare_redirty", True))
+            if not redirty_required and cfg.get("oracle_backend") != "force_swapout":
+                raise ValueError("Background-only preparation is restricted to the anonymous disk experiment")
+            prepare = _scene4_dirty_prepare if redirty_required else _scene4_minimize_prepare
+            dirty_prepare_result = prepare(session, case_id, bundles,
                 float(cfg.get("oracle_redirty_prepare_timeout_s", 90)))
+            dirty_prepare_result["redirty_required"] = redirty_required
+            # Preserve preparation evidence even if the subsequent clock read fails.
+            reclaim_diagnostics["dirty_file_prepare"] = dirty_prepare_result
             dirty_prepare_result["completed_boottime_s"] = float(d.shell("cat /proc/uptime").split()[0])
             reclaim_diagnostics["dirty_file_prepare"] = dirty_prepare_result
             dirty_prepare_complete = bool(dirty_prepare_result.get("complete"))
@@ -5033,11 +5099,13 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
         except Exception as exc:
             dirty_prepare_complete = False
             reclaim_diagnostics["dirty_file_prepare"] = {
-                "complete": False, "error": str(exc),
-                "classification": "dirty input and pre-reclaim background state unknown"}
+                "complete": False, "error": str(exc), "prior_prepare_result": dirty_prepare_result,
+                "classification": "required preparation or its completion timestamp unknown"}
             session.result.setdefault("case_evidence_gaps", []).append({
                 "case_id": case_id, "reason": "dirty_file_prepare_failed", "error": str(exc)})
             session.result["measurement_evidence_complete"] = False
+    if scene4_v3_profile:
+        d.command_timeout = measurement_command_timeout
     if daily_barrier_complete and scene4_v3_profile:
         window_seconds = float(cfg.get("daily_cold_seconds", 0))
         # Anchor the fixed window immediately after the common preparation
@@ -5087,7 +5155,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                 "error": str(exc)})
             session.result["measurement_evidence_complete"] = False
             session.result.setdefault("telemetry_errors", []).append({
-                "case_id": case_id, "source": f"scene4_peak_transition_schema{2 if cfg.get('oracle_backend') == 'force_shrink_all' else 3}", "error": str(exc),
+                "case_id": case_id, "source": f"scene4_peak_transition_schema{3 if cfg.get('oracle_backend') == 'proc_file_writeback' else 2}", "error": str(exc),
                 "classification": "oracle effect unknown; workload timing continues unchanged"})
         while time.monotonic() < host_deadline:
             time.sleep(min(0.05, max(0.0, host_deadline - time.monotonic())))
@@ -5141,7 +5209,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             dispatch_host_start = time.monotonic()
             reclaim_diagnostics["peak_transition_profile"]["promote_dispatch_host_start_monotonic"] = dispatch_host_start
             reclaim_diagnostics["peak_transition_profile"]["promote_expected_wall_ms_from_begin_anchor"] = promote_started_ms
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(bundles)) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(peak_targets)) as pool:
             def timed_promote(bundle: str):
                 host_start_ns = time.monotonic_ns()
                 try:
@@ -5153,7 +5221,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                             "host_start_monotonic_ns": host_start_ns,
                             "host_end_monotonic_ns": host_end_ns,
                             "duration_seconds": (host_end_ns-host_start_ns)/1e9}
-            futures = {pool.submit(timed_promote, bundle): bundle for bundle in bundles}
+            futures = {pool.submit(timed_promote, bundle): bundle for bundle in peak_targets}
             if profile_window is not None:
                 dispatch_submitted_host = time.monotonic()
                 reclaim_diagnostics["peak_transition_profile"]["promote_requests_submitted_host_monotonic"] = \
@@ -5212,7 +5280,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
         time.sleep(1)
         if strategy == "foreground_popup_with_background_pressure" and bundles:
             try:
-                session.device.focus(bundles[0])
+                session.device.focus(peak_targets[0])
                 foreground_restore_ms = session.safe_now_ms(case_id, "foreground_restore")
             except Exception as exc:
                 foreground_restore_ms = None
@@ -5306,7 +5374,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                                        "host_monotonic": time.monotonic(),
                                        "bundles": sorted(focused or [])})
             last_ui = time.monotonic()
-        if len(completed) == len(bundles):
+        if set(peak_targets).issubset(completed):
             break
         time.sleep(0.5)
     # Final UI/journal evidence must precede cleanup.
@@ -5463,6 +5531,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                                               wall_uptime_anchor["wall_ms"],
                                               wall_uptime_anchor["uptime_seconds"],
                                               scene4_peak_transition=scene4_v3_profile,
+                                               startup_failure_bundles=set(peak_targets) if background_donors else None,
                                               daily_attempt_rows=daily_records if scene4_v3_profile else None,
                                               daily_journal_readback_complete_bundles=profile_daily_journal_complete,
                                               journal_readback_complete_bundles=profile_peak_journal_complete,
@@ -5474,13 +5543,13 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             session.result["measurement_evidence_complete"] = False
     # Startup outcomes are finalized only after dmesg/ftrace/system collection,
     # so a late-confirmed kernel OOM can be linked to the exact peak PID lifetime.
-    for bundle in bundles:
+    for bundle in peak_targets:
         session.book.finalize_startup_attempt(
             case_id, bundle, records.get(bundle, []), observed_pids, end_ms,
             f"journals/{case_id}_{bundle}.jsonl", allow_timeout=daily_barrier_complete,
             peak_transition_profile=scene4_v3_profile)
     measured = []
-    for bundle in bundles:
+    for bundle in peak_targets:
         rows = records[bundle]
         reached = [row for row in rows if row["event"] == "peak_reached"]
         ready = [row for row in rows if row["event"] == "startup_ready"]
@@ -5555,7 +5624,7 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
                 residency_overlap.append(active)
     if strategy == "foreground_popup_with_background_pressure" and bundles:
         try:
-            d.focus(bundles[0])
+            d.focus(peak_targets[0])
             foreground_restore_ms = session.safe_now_ms(case_id, "foreground_restore")
             time.sleep(1)
             session.ui_evidence(case_id, bundles, observation_phase="post_end",
@@ -5657,9 +5726,26 @@ def scene2_case(session: Session, case_id: str, bundles: list[str], peak: int, h
             "launch_errors": errors}
     if session.scene == 4:
         result_case["file_mib"] = file_mib
+        if background_donors:
+            result_case["memory_roles"] = roles
+            result_case["background_donor_observations"] = [{
+                "bundle": bundle, "daily_ready": any(r.get("event") == "daily_ready" for r in daily_records[bundle]),
+                "unexpected_peak_events": [r for r in records[bundle] if r.get("event") in
+                    ("peak_begin", "peak_reached", "startup_ready") or
+                    (r.get("event") == "allocation_failed" and r.get("phase") == "peak_allocating")],
+                "oom_events": [e for e in case_events if e.get("bundle") == bundle and e.get("category") == "oom_kill"],
+                "lifetime_observations": [i for entries in observed_pids.values() for i in entries if i["bundle"] == bundle]
+            } for bundle in background_donors]
+            if any(x["unexpected_peak_events"] for x in result_case["background_donor_observations"]):
+                result_case["case_measurement_complete"] = False
+                session.result["measurement_evidence_complete"] = False
         if scene4_v3_profile:
             result_case["dirty_file_prepare"] = reclaim_diagnostics.get("dirty_file_prepare")
-            result_case["dirty_file_prepare_complete"] = dirty_gate_complete
+            redirty_required = bool(cfg.get("oracle_prepare_redirty", True))
+            result_case["dirty_file_prepare_complete"] = dirty_gate_complete if redirty_required else None
+            if not redirty_required:
+                result_case["background_prepare_complete"] = dirty_gate_complete
+                result_case["extra_file_redirty_requested"] = False
         result_case["reclaim_diagnostics"] = reclaim_diagnostics
         result_case["file_sync_proofs"] = {
             bundle: {
@@ -5715,6 +5801,8 @@ def case_definitions(config: dict, subcase: str = "combined", scene_key: str = "
                           "hold_seconds": hold, "seed": cfg.get("seed", 1)})
             if scene_key == "scene4":
                 cases[-1]["file_mib"] = int(profile.get("file_mib", cfg.get("file_mib", 0)))
+                if cfg.get("fixed_background_donors"):
+                    cases[-1]["memory_roles"] = memory_roles(cfg, ordered, requested_peak, cases[-1]["file_mib"])
     return cases
 
 def calibration_profiles(config: dict) -> list[dict]:
@@ -5928,6 +6016,62 @@ def _scene4_journal_readback(session: "Session", bundle: str, journal_case_id: s
             "byte_stable": stable, "ends_with_newline": raw_second.endswith("\n"),
             "malformed_lines": malformed,
             "reason": None if complete else "journal_not_byte_stable_complete_jsonl"}
+
+
+def _scene4_minimize_prepare(session: "Session", case_id: str, bundles: list[str],
+                            timeout_seconds: float) -> dict:
+    """Only minimize owned test windows; never touch or claim to redirty file pages."""
+    if not re.fullmatch(r"s4_[a-f0-9]+_c\d{4}", case_id) or not bundles or any(
+            not re.fullmatch(r"io\.memscene\.scene4\.workload\.a[1-8]", b) for b in bundles):
+        raise ValueError("background preparation requires owned Scene4 identities")
+    started = time.monotonic()
+    deadline = started + max(1.0, min(90.0, float(timeout_seconds)))
+    completed, errors, launched = {}, {}, {}
+    for bundle in bundles:
+        try:
+            launched[bundle] = session.device.launch(bundle,
+                params={"op": "minimize_only", "case_id": case_id})
+        except Exception as exc:
+            errors[bundle] = {"launch_error": str(exc)}
+    while time.monotonic() < deadline and len(completed) + len(errors) < len(bundles):
+        for bundle in bundles:
+            if bundle in completed or bundle in errors:
+                continue
+            try:
+                rows = session.journal(bundle, case_id + "_daily")
+                requested = [r for r in rows if r.get("event") == "background_prepare_requested"]
+                success = [r for r in rows if r.get("event") == "background_prepare_succeeded"]
+                failure = [r for r in rows if r.get("event") in (
+                    "background_prepare_failed", "background_prepare_rejected")]
+                if failure:
+                    errors[bundle] = "owned_window_minimize_failed_or_rejected"
+                elif requested and success:
+                    first, last = requested[-1], success[-1]
+                    uid = int(session.device.app(bundle)["uid"])
+                    valid = (int(first.get("pid", 0)) > 0 and int(first.get("start_ticks", 0)) > 0 and
+                        all(str(first.get(k)) == str(last.get(k)) for k in ("pid", "uid", "start_ticks")) and
+                        int(last.get("uid", -1)) == uid and
+                        first.get("case_id") == last.get("case_id") == case_id + "_daily" and
+                        _scene4_event_time(first) is not None and _scene4_event_time(last) is not None and
+                        _scene4_event_time(last) >= _scene4_event_time(first))
+                    if not valid:
+                        errors[bundle] = "minimize_request_completion_identity_or_time_mismatch"
+                    else:
+                        completed[bundle] = {"pid": last["pid"], "uid": uid,
+                            "start_ticks": last["start_ticks"], "minimize_event": last}
+            except Exception as exc:
+                errors[bundle] = {"journal_or_identity_error": str(exc)}
+        if len(completed) + len(errors) < len(bundles):
+            time.sleep(0.2)
+    for bundle in bundles:
+        if bundle not in completed and bundle not in errors:
+            errors[bundle] = "minimize_completion_unknown"
+    return {"complete": len(completed) == len(bundles) and not errors,
+        "mode": "background_only_no_redirty", "redirty_required": False,
+        "started_host_monotonic": started, "completed_host_monotonic": time.monotonic(),
+        "elapsed_seconds": time.monotonic() - started, "bundles": completed,
+        "errors": errors, "launch_output": launched,
+        "file_redirty_performed": False, "file_dirty_state": "not_established_by_this_preparation"}
 
 
 def _scene4_dirty_prepare(session: "Session", case_id: str, bundles: list[str],

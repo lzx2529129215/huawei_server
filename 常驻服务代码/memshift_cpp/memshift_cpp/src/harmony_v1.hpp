@@ -6,6 +6,17 @@ namespace ms::harmony_v1 {
 struct VendorStat {
     std::optional<Bytes> anonKiB, zramKiB, eswapKiB;
 };
+struct OracleDiskPool { Bytes zramBytes=0, eswapBytes=0; };
+bool oracleDiskBackendEnabledText(const std::string& text);
+std::optional<OracleDiskPool> parseOracleDiskPool(const std::string& text);
+std::optional<Bytes> oracleDiskWorkEstimate(Bytes poolBytes, Bytes rssAnonKiB);
+bool oracleDiskPoolMeetsMinimum(Bytes poolBytes, Bytes minimum);
+bool oracleDiskPreparationComplete(bool attempted, const std::string& status,
+    bool identityVerified, std::int64_t rssDeltaKiB, bool overlap);
+Bytes oracleDeviceDonorTotalKeepFloor(const Options& options, const std::string& donorBundle, Bytes appKeep);
+bool oracleDiskPostwriteRecheckEligible(unsigned schemaVersion,
+    const std::string& profile,const std::string& backend,const std::string& freshnessFailure);
+Bytes oracleDiskReservation(Bytes pool, Bytes room, Bytes margin, Bytes minimum);
 
 struct ProcStat {
     std::uint64_t pid=0, startTicks=0, minflt=0, majflt=0;
@@ -24,6 +35,15 @@ struct OracleRssSample {
     std::optional<Bytes> rssKiB;
 };
 
+enum class OracleDeviceCooldownSelection { Available, LegacyBlocked, SkipDonor, WaitForProof, HaltEvent };
+OracleDeviceCooldownSelection oracleDeviceCooldownSelection(bool device,unsigned schema,bool diskPrepare,const std::string& backend,bool cooling,bool identityComplete,const std::string& backgroundFailure,bool protectedByControl);
+
+bool oraclePreparationWorkMode(bool device,bool diskPrepare,const std::string& backend);
+std::optional<Bytes> oraclePreparationWorkEstimate(const OracleRssSample& sample);
+Bytes oraclePreparationWorkReservation(const OracleRssSample& sample,Bytes room,Bytes margin);
+bool oraclePreparationFeedbackWithinReservation(bool workMode,Bytes drop,Bytes reservation);
+bool oraclePreparationFinalRatioAllowed(const OracleRssSample& sample,Bytes plannedIncrement,unsigned ratio,Bytes anonKeep,Bytes totalKeep);
+
 struct OracleWatermarkPlan {
     unsigned ratio=0;
     Bytes totalAnonProxyBytes=0;
@@ -31,6 +51,14 @@ struct OracleWatermarkPlan {
     Bytes estimatedIncrementBytes=0;
     Bytes estimatedRetainedBytes=0;
 };
+std::optional<Bytes> oraclePipelineAnonKeep(const OracleRssSample& sample,
+    Bytes anonKeep, Bytes totalKeep);
+bool oraclePipelineKeepSatisfied(const OracleRssSample& sample,
+    Bytes anonKeep, Bytes totalKeep);
+
+std::string oraclePipelineKeepFailure(const std::optional<OracleRssSample>& sample, bool identityVerified,
+    Bytes anonKeep, Bytes totalKeep);
+bool oraclePrecommitMaySkipDonor(const std::string& fullGuardFailure);
 
 struct OracleRssFeedback {
     bool identityVerified=false;
@@ -90,6 +118,12 @@ Bytes oracleProcFileWritebackReservation(Bytes estimatedRssFileBytes, Bytes regi
 bool oracleProcFileWritebackEstimateFits(Bytes currentRssFileKiB,
     Bytes registeredFileSizeBytes, Bytes reservedBytes);
 bool oracleProcFileWritebackSystemGapFits(Bytes currentGapBytes, Bytes reservedBytes);
+struct OracleDiskPriorityAttempt { unsigned donorIndex=0; bool priorityDiskOnly=false; };
+std::optional<bool> oracleDiskPriorityPrepRoomAvailable(const OracleRssSample& sample,
+    Bytes anonKeep,Bytes totalKeep,Bytes minBatch,Bytes safetyMargin);
+std::vector<OracleDiskPriorityAttempt> oracleDiskPriorityAttempts(
+    const std::vector<unsigned>& rotation,const std::vector<bool>& zramPoolReady,
+    const std::vector<bool>& diskPrepared,const std::vector<std::optional<bool>>& prepRoomAvailable);
 bool oracleProfileTargetMaySubmit(bool alreadySubmitted, bool identityComplete);
 bool oracleProfileDonorCooldownScope(unsigned schemaVersion, const std::string& profile,
     const std::string& backend);
@@ -132,6 +166,7 @@ bool oracleProcFileRecheckFeedbackMayContinue(bool identityVerified,
     const std::optional<Bytes>& postRssTotalKiB, Bytes keepReserveBytes);
 bool oracleProfileRunsFullObservation(bool profileEnabled,bool eventActive,bool observationDue);
 unsigned oracleLoopIntervalMs(bool profileEnabled,bool eventActive,unsigned profilePollMs,unsigned normalIntervalMs);
+bool oracleFastPollWindow(bool device,double now,double launch);
 bool oracleMayReserveAction(bool workerInFlight,double now,double lastSubmit,double minInterval,double launch);
 bool oracleRatioCanAdvance(unsigned priorSuccessfulRatio, unsigned candidateRatio);
 // Returns a retryable reason only when all identity/background facts remain
@@ -140,6 +175,8 @@ std::string oracleFreshnessFailure(bool structuralEvidenceValid, double now,
     const std::vector<std::pair<std::string,double>>& observations,
     double maxAgeSeconds=2.5);
 bool oracleFreshnessFailureRetryable(const std::string& reason);
+bool oracleUnsubmittedEvidenceMayDefer(const std::string& status,
+    bool writeAttempted, bool writebackAttempted, bool overlap);
 // Parser seam for deterministic protocol tests; performs no device I/O.
 void validateOracleScheduleText(const std::string& text);
 int run(const Configuration& config, const std::string& backend, bool check, bool apply, Bytes ticks, const std::function<bool()>& stopping);

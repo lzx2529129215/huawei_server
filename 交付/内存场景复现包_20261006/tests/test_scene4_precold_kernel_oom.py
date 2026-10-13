@@ -194,3 +194,18 @@ def test_peak_transition_oom_classification_uses_actual_promote_and_peak_events(
     assert result["victims"][0]["peak_transition_stage"] == expected_stage
     assert sum(event["category"] == "oom_kill" for event in book.events) == 1
     assert sum(event["category"] == "startup_failure" for event in book.events) == expected_failure
+
+
+@pytest.mark.parametrize('stage', ['before_promote', 'peak_allocating'])
+def test_fixed_background_donor_oom_still_counts_without_peak_failure(stage):
+    daily, peak = peak_profile_rows(stage=stage)
+    book = EventBook()
+    result = book.kernel_dmesg_oom_victims(
+        dmesg(victim_s=50.05, exit_s=50.1), CASE, {}, {BUNDLE: UID},
+        {BUNDLE: peak}, 10.0, 110.0, 100000, 10.0, 'kernel.log',
+        scene4_peak_transition=True, daily_attempt_rows={BUNDLE: daily},
+        daily_journal_readback_complete_bundles={BUNDLE},
+        journal_readback_complete_bundles={BUNDLE}, startup_failure_bundles=set())
+    assert result['victims_detected'] == 1
+    assert not result['victims'][0]['startup_failure_eligible']
+    assert [e['category'] for e in book.events] == ['oom_kill']

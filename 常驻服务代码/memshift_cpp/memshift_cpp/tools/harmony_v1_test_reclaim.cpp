@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
     try {
         if (argc != 5) {
             std::cerr << "Usage: harmony_v1_test_reclaim /dev/memcg/memshift_probe_NAME PID "
-                         "memory.force_shrink_anon|memory.force_shrink_anon_bycount|proc-reclaim PAYLOAD\n";
+                         "memory.force_shrink_anon|memory.force_shrink_anon_bycount|memory.force_swapout|proc-reclaim PAYLOAD\n";
             return 2;
         }
         const std::string group = argv[1];
@@ -159,10 +159,16 @@ int main(int argc, char** argv) {
         if (pid == 0) throw std::runtime_error("PID must be positive");
         const std::string endpoint = argv[3];
         const bool processReclaim = endpoint == "proc-reclaim";
-        if (!processReclaim && endpoint != "memory.force_shrink_anon" && endpoint != "memory.force_shrink_anon_bycount")
+        const bool swapoutCommand = endpoint == "memory.force_swapout";
+        if (!processReclaim && !swapoutCommand && endpoint != "memory.force_shrink_anon" && endpoint != "memory.force_shrink_anon_bycount")
             throw std::runtime_error("endpoint is not on the isolated-test allowlist");
         std::string payload;
-        if (processReclaim) {
+        if (swapoutCommand) {
+            // Matching device memmgr library submits literal "1". This is a
+            // command, NOT a byte budget; only the isolated <=128MiB group is allowed.
+            if (std::string(argv[4]) != "1") throw std::runtime_error("isolated swapout only accepts the observed literal command 1");
+            payload = "1";
+        } else if (processReclaim) {
             if (std::string(argv[4]) != "anon") throw std::runtime_error("proc-reclaim only accepts the literal payload anon");
             payload = "anon\n";
         } else {
@@ -189,8 +195,9 @@ int main(int argc, char** argv) {
         std::cout << "event=vendor_reclaim_write status=" << (accepted ? "accepted" : "failed")
                   << " group=" << group << " pid=" << pid << " start_ticks=" << initialStart
                   << " exe=" << initialExe << " endpoint=" << endpoint
-                  << " payload=" << (processReclaim ? "anon" : payload.substr(0, payload.size() - 1))
-                  << " payload_units=unknown bytes_written=" << n << " errno=" << (accepted ? 0 : saved)
+                  << " payload=" << trim(payload)
+                  << " payload_units=" << (swapoutCommand ? "command_no_capacity_bound" : "unknown")
+                  << " bytes_written=" << n << " errno=" << (n < 0 ? saved : 0)
                   << " elapsed_us=" << elapsedUs << " current_before_bytes=" << currentBefore
                   << " current_after_bytes=" << currentBytes(group)
                   << "\n";

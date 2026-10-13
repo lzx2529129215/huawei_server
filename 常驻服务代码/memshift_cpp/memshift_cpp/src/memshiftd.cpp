@@ -218,6 +218,10 @@ int run(const Args& args) {
     if(args.backend!="linux-v2" && args.fixture)
         throw std::runtime_error("--fixture is supported only by the linux-v2 test backend");
     auto cfg=parseConfig(readPath(args.config)); const auto& o=cfg.options;
+    if(o.dailyKnownFutureFreeOnly && args.backend!="harmony-v1-ratio")
+        throw std::runtime_error("daily_known_future_free_only requires --backend harmony-v1-ratio");
+    if(o.dailyRecentReserve && args.backend!="harmony-v1-ratio")
+        throw std::runtime_error("daily_recent_reserve requires --backend harmony-v1-ratio");
     if(args.backend!="linux-v2")
         return harmony_v1::run(cfg,args.backend,args.check,args.apply,args.ticks,[]{return stopping!=0;});
     if(!args.fixture && o.proc!="/proc") throw std::runtime_error("proc_root must be /proc unless --fixture");

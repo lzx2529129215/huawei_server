@@ -488,7 +488,8 @@ class EventBook:
                     readiness_relation = "peak_allocating"
                 else:
                     readiness_relation = "before_promote"
-                startup_eligible = readiness_relation in ("pre_ready", "peak_allocating")
+                startup_eligible = (readiness_relation in ("pre_ready", "peak_allocating") and
+                    (startup_failure_bundles is None or bundle in startup_failure_bundles))
             elif scene4_cold_only:
                 if identities and identity is None:
                     # A sampled PID known under another UID/generation/lifetime
@@ -641,7 +642,7 @@ class EventBook:
                      "mem_oom selected target process and process exit followed",
                      evidence + ":\n" + line.strip() + "\n" + exit_line.strip(), incident,
                      f"{pid}:{identity['start_ticks']}:{dmesg_s:.6f}")
-            if scene4_peak_transition and readiness_relation in ("pre_ready", "peak_allocating"):
+            if scene4_peak_transition and startup_eligible:
                 failure_reason = ("OOM before daily_ready; startup attempt failed" if readiness_relation == "pre_ready"
                                   else "OOM during peak allocation before peak_reached; peak transition failed")
                 self.add("startup_failure", case_id, bundle, pid, wall_ms,

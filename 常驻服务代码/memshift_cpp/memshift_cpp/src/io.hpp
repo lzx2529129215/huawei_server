@@ -154,6 +154,9 @@ inline System systemSample(const std::string& proc) {
     }
     s.total = required(info,"MemTotal"); s.available = required(info,"MemAvailable");
     s.free = required(info,"MemFree"); s.cached=get(info,"Cached"); s.dirty=get(info,"Dirty");
+    if(info.count("Writeback")) s.writebackBytes=info.at("Writeback");
+    if(info.count("AnonPages")) s.anonPagesBytes=info.at("AnonPages");
+    if(info.count("Shmem")) s.shmemBytes=info.at("Shmem");
     s.swapTotal = required(info,"SwapTotal");
     s.swapFree = required(info,"SwapFree"); s.zswap = get(info,"Zswap"); s.zswapped = get(info,"Zswapped");
     if (!s.total || s.available > s.total || s.free > s.total) throw std::runtime_error("inconsistent meminfo");
@@ -162,6 +165,7 @@ inline System systemSample(const std::string& proc) {
     try {
         auto vm = counters(readPath(proc+"/vmstat"));
         s.pswpin = get(vm,"pswpin"); s.pswpout = get(vm,"pswpout");
+        if(vm.count("oom_kill_cnt")) s.oomKillCnt=vm.at("oom_kill_cnt");
     } catch (const std::exception&) {}
     return s;
 }
@@ -183,22 +187,44 @@ inline Configuration parseConfig(const std::string& text) {
         else if(k=="lock_file") o.lock=v;
         else if(k=="control_file") o.control=v;
         else if(k=="oracle_mode") o.oracleMode=boolValue(v);
+        else if(k=="oracle_known_future_free_only") o.oracleKnownFutureFreeOnly=boolValue(v);
+        else if(k=="daily_async") o.dailyAsync=boolValue(v);
+        else if(k=="daily_known_lead_sec") o.dailyKnownLeadSec=realValue(v);
+        else if(k=="daily_known_capacity") o.dailyKnownCapacity=boolValue(v);
+        else if(k=="daily_known_strength") o.dailyKnownStrength=boolValue(v);
+        else if(k=="daily_known_future_free_only") o.dailyKnownFutureFreeOnly=boolValue(v);
+        else if(k=="daily_known_plan_file") o.dailyKnownPlan=v;
+        else if(k=="daily_known_evidence_ledger") o.dailyKnownLedger=v;
+        else if(k=="daily_recent_reserve") o.dailyRecentReserve=boolValue(v);
+        else if(k=="daily_recent_window_sec") o.dailyRecentWindowSec=realValue(v);
+        else if(k=="daily_recent_hold_sec") o.dailyRecentHoldSec=realValue(v);
+        else if(k=="daily_recent_cap_fraction") o.dailyRecentCapFraction=realValue(v);
+        else if(k=="daily_owned_os_snapshot") o.dailyOwnedOsSnapshot=boolValue(v);
+        else if(k=="daily_disk_mode") o.dailyDiskMode=v;
+        else if(k=="daily_disk_whole_work_mb") o.dailyDiskWholeWork=mbValue(v);
+        else if(k=="daily_max_submissions") o.dailyMaxSubmissions=uintValue(v);
+        else if(k=="oracle_disk_prepare_anon") o.oracleDiskPrepareAnon=boolValue(v);
+        else if(k=="oracle_defer_smaps") o.oracleDeferSmaps=boolValue(v);
+        else if(k=="harmony_smaps_interval_ms") { auto n=uintValue(v); if(n!=0 && (n<1000 || n>600000)) throw std::runtime_error("harmony_smaps_interval_ms: 0 or 1000..600000"); o.harmonySmapsIntervalMs=static_cast<unsigned>(n); }
         else if(k=="oracle_profile") {
             if(v!="legacy_two_donor" && v!="peak_transition_os_snapshot")
                 throw std::runtime_error("oracle_profile: unsupported value");
             o.oracleProfile=v;
         }
         else if(k=="oracle_backend") {
-            if(v!="force_shrink_all" && v!="proc_file" && v!="proc_file_writeback")
+            if(v!="force_shrink_all" && v!="force_swapout" && v!="proc_file" && v!="proc_file_writeback")
                 throw std::runtime_error("oracle_backend: unsupported value");
             o.oracleBackend=v;
             o.oracleBackendExplicit=true;
         }
         else if(k=="oracle_schedule_file") o.oracleSchedule=v;
+        else if(k=="oracle_plan_file") o.oraclePlan=v;
+        else if(k=="oracle_proof_source") { if(v!="legacy" && v!="device") throw std::runtime_error("oracle_proof_source: legacy/device"); o.oracleProofSource=v; }
         else if(k=="oracle_ledger_file") o.oracleLedger=v;
         else if(k=="oracle_batch_mb") o.oracleBatch=mbValue(v);
-        else if(k=="oracle_max_ratio") { auto n=uintValue(v); if(n<1 || n>90) throw std::runtime_error("oracle_max_ratio: 1..90"); o.oracleMaxRatio=static_cast<unsigned>(n); }
+        else if(k=="oracle_max_ratio") { auto n=uintValue(v); if(n<1 || n>95) throw std::runtime_error("oracle_max_ratio: 1..95"); o.oracleMaxRatio=static_cast<unsigned>(n); }
         else if(k=="oracle_cumulative_keep_mb") { auto n=uintValue(v); if(n<128 || n>512) throw std::runtime_error("oracle_cumulative_keep_mb: 128..512"); o.oracleCumulativeKeep=mbValue(v); }
+        else if(k=="oracle_device_donor_total_keep_mb") { auto n=uintValue(v); if(n<128 || n>512) throw std::runtime_error("oracle_device_donor_total_keep_mb: 128..512"); o.oracleDeviceDonorTotalKeep=mbValue(v); }
         else if(k=="oracle_ratio_semantics") {
             if(v!="resident_incremental" && v!="cumulative_anon_watermark")
                 throw std::runtime_error("oracle_ratio_semantics: unsupported value");
@@ -259,11 +285,16 @@ inline Configuration parseConfig(const std::string& text) {
         if(!app) setOption(k,v);
         else if(k=="path") app->path=v;
         else if(k=="reclaim") app->reclaim=boolValue(v);
+        else if(k=="wps_window_gate") app->wpsWindowGate=boolValue(v);
         else if(k=="min_keep_mb") app->keep=mbValue(v);
         else throw std::runtime_error("unknown app key: "+k);
     }
     const auto& o=c.options;
     auto check=[](bool ok,const char* msg){ if(!ok) throw std::runtime_error(msg); };
+    for(const auto& entry:c.apps) if(entry.wpsWindowGate)
+        check(entry.name=="wps" && entry.path=="100/cn.wps.office.hap_20020028" && entry.reclaim &&
+            entry.keep>=512*MiB && o.dailyAsync && !o.oracleMode,
+            "wps_window_gate requires the exact WPS leaf, daily_async, reclaim and 512 MiB keep");
     check(!o.root.empty() && o.root.front()=='/' && !o.proc.empty() && o.proc.front()=='/',"root paths must be absolute");
     check(!o.logs.empty() && !o.lock.empty(),"log_dir and lock_file required");
     check(o.horizonSec>=0 && o.horizonSec<=60,"horizon_sec: 0..60");
@@ -272,11 +303,80 @@ inline Configuration parseConfig(const std::string& text) {
     check(o.keepRatio>=0 && o.keepRatio<=1 && o.episodeFraction>0 && o.episodeFraction<=0.5,"keep_ratio or episode_fraction invalid");
     check(o.maxDeclineMBps>0 && o.growthGuardMBps>0 && o.refaultGuardMBps>0 && o.majorGuardPS>0,"guard rates must be positive");
     check(o.ioSomeLimit>0 && o.ioSomeLimit<=100 && o.memoryFullLimit>0 && o.memoryFullLimit<=100 && o.appSomeLimit>0 && o.appSomeLimit<=100,"PSI limits: (0,100]");
-    check(o.minBatch>=MiB && o.batch>=o.minBatch && (o.oracleMode || o.batch<=256*MiB),"batch_mb must be 1..256 and >= min_batch_mb outside oracle mode");
+    check(o.minBatch>=MiB && o.batch>=o.minBatch && (o.oracleMode || o.batch<=(o.dailyKnownCapacity?1536:(o.dailyKnownStrength?1024:256))*MiB),"batch_mb exceeds mode-specific limit or is below min_batch_mb");
     check(o.perMinute>=o.batch && o.appPerMinute>=o.minBatch && o.logMax>=MiB,"invalid rate/log limits");
     if(o.oracleMode) {
         check(!o.oracleSchedule.empty() && !o.oracleLedger.empty(),"oracle mode requires separate schedule and ledger files");
         check(o.oracleBatch>=MiB && o.oracleGlobalCap>=o.oracleBatch && o.oracleCaseCap>=o.oracleBatch && o.oracleAppCap>=o.oracleBatch,"invalid oracle independent caps");
+    }
+    check(!o.oracleKnownFutureFreeOnly || (o.oracleMode && o.oracleProofSource=="device" &&
+        o.oracleProfile=="peak_transition_os_snapshot" && o.oracleDiskPrepareAnon && o.oracleBackend=="force_swapout"),
+        "oracle_known_future_free_only requires device-proven oracle peak-transition disk preparation");
+    check(o.dailyKnownLeadSec>=35 && o.dailyKnownLeadSec<=300 && (o.dailyKnownLeadSec==35 || o.dailyKnownCapacity),"daily_known_lead_sec: 35..300; extended horizon requires known-owned capacity");
+    check(!o.dailyKnownCapacity || (o.dailyKnownStrength && o.dailyKnownFutureFreeOnly && o.dailyAsync &&
+        !o.oracleMode && o.dailyOwnedOsSnapshot && o.dailyDiskMode=="owned_apply" && o.minBatch>=64*MiB),
+        "daily_known_capacity requires known-strength exact-owned mixed authority and min_batch_mb>=64");
+    check(!o.dailyKnownStrength || (o.dailyKnownFutureFreeOnly && o.dailyAsync && !o.oracleMode &&
+        o.dailyOwnedOsSnapshot && o.dailyDiskMode=="owned_apply"),
+        "daily_known_strength requires registered known future, owned daily and explicit mixed backend");
+    check(!o.dailyKnownFutureFreeOnly || (o.dailyAsync && !o.oracleMode && !o.oracleKnownFutureFreeOnly &&
+        !o.dailyRecentReserve && o.oracleProofSource=="legacy" && o.dailyOwnedOsSnapshot &&
+        !o.dailyKnownPlan.empty() && o.dailyKnownPlan.front()=='/' && !o.dailyKnownLedger.empty() &&
+        o.dailyKnownLedger.front()=='/' && o.dailyKnownPlan!=o.dailyKnownLedger),
+        "daily known future requires non-oracle owned daily, separate absolute event/evidence paths, and recent off");
+    check(!o.dailyAsync || (!o.oracleMode && o.oracleProofSource=="legacy"),
+        "daily_async is non-oracle and cannot consume an experimental device plan");
+    check(std::isfinite(o.dailyRecentWindowSec) && o.dailyRecentWindowSec>=1 && o.dailyRecentWindowSec<=60 &&
+        std::isfinite(o.dailyRecentHoldSec) && o.dailyRecentHoldSec>=1 && o.dailyRecentHoldSec<=120 &&
+        std::isfinite(o.dailyRecentCapFraction) && o.dailyRecentCapFraction>0 && o.dailyRecentCapFraction<=0.5,
+        "daily recent reserve window: 1..60, hold: 1..120, cap fraction: (0,0.5]");
+    check(!o.dailyRecentReserve || (o.dailyAsync && !o.oracleMode && o.oracleProofSource=="legacy"),
+        "daily_recent_reserve requires non-oracle daily_async");
+    check(!o.dailyOwnedOsSnapshot || (o.dailyAsync && !o.oracleMode && o.oracleProofSource=="legacy"),
+        "daily_owned_os_snapshot requires non-oracle daily_async");
+    check(o.dailyDiskMode=="off" || o.dailyDiskMode=="observe" || o.dailyDiskMode=="owned_apply","daily_disk_mode: off/observe/owned_apply");
+    check(o.dailyDiskMode=="off" || (o.dailyAsync && !o.oracleMode && o.oracleProofSource=="legacy"),"daily disk requires non-oracle daily_async");
+    check(o.dailyDiskMode!="owned_apply" || (o.dailyDiskWholeWork>=o.minBatch &&
+        o.dailyDiskWholeWork<=o.perMinute && o.dailyDiskWholeWork<=o.appPerMinute),
+        "owned_apply whole-work limit must be explicit and within existing shared/app quotas");
+    check(!o.dailyMaxSubmissions || (o.dailyAsync && !o.oracleMode),"daily_max_submissions requires non-oracle daily_async");
+    if(o.oracleDeviceDonorTotalKeep<512*MiB) {
+        check(o.oracleMode && o.oracleProofSource=="device" && o.oracleProfile=="peak_transition_os_snapshot" &&
+            o.oracleDiskPrepareAnon && (o.oracleBackend=="force_shrink_all" || o.oracleBackend=="force_swapout"),
+            "lower device donor total keep requires device-proven peak-transition disk-preparation profile");
+        check(!c.apps.empty(),"lower device donor total keep requires owned donor entries");
+        for(const auto& a:c.apps) {
+            bool fixedRoleBundle=false;
+            for(unsigned i=1;i<=16;++i) if(a.name=="io.memscene.scene4.workload.a"+std::to_string(i)) fixedRoleBundle=true;
+            check(fixedRoleBundle,"lower device donor total keep is restricted to the fixed owned scene4 bundle set");
+        }
+    }
+    if(o.oracleMaxRatio>90) {
+        check(o.oracleMode && o.oracleProofSource=="device" && o.oracleProfile=="peak_transition_os_snapshot" &&
+            o.oracleDiskPrepareAnon && (o.oracleBackend=="force_shrink_all" || o.oracleBackend=="force_swapout"),
+            "oracle max ratio above 90 is restricted to the device-proven peak-transition preparation profile");
+        check(!c.apps.empty(),"high-ratio device profile requires fixed owned scene4 apps");
+        for(const auto& a:c.apps) {
+            bool fixedScene4=false;
+            for(unsigned i=1;i<=16;++i) if(a.name=="io.memscene.scene4.workload.a"+std::to_string(i)) fixedScene4=true;
+            check(fixedScene4,"high oracle max ratio is restricted to the fixed owned scene4 app set");
+        }
+    }
+    if(o.dailyKnownFutureFreeOnly) {
+        std::set<unsigned> owned;
+        for(const auto& app:c.apps) if(app.reclaim) {
+            unsigned role=0;
+            for(unsigned i=1;i<=13;++i) {
+                const std::string prefix="100/io.memscene.scene4.workload.a"+std::to_string(i)+"_";
+                if(app.path.rfind(prefix,0)==0) {
+                    const auto uid=app.path.substr(prefix.size());
+                    if(!uid.empty() && uid.find_first_not_of("0123456789")==std::string::npos && uintValue(uid)>0) role=i;
+                }
+            }
+            check(!o.dailyKnownCapacity || app.keep>=128*MiB,"known capacity keep must be at least128MiB");
+            check(role && owned.insert(role).second,"daily known future reclaim scope requires unique owned donor leaves a1-a13");
+        }
+        check(owned.size()==13,"daily known future requires all thirteen registered owned donor leaves");
     }
     check(!c.apps.empty(),"configure at least one [app NAME]");
     for(std::size_t i=0;i<c.apps.size();++i) {
