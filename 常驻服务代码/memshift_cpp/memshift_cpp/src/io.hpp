@@ -141,6 +141,8 @@ inline Sample sampleAt(int fd) {
     a.valid = true;
     return a;
 }
+
+//lzx-note 读取/proc/meminfo，更新EWMA趋势预测
 inline System systemSample(const std::string& proc) {
     System s; s.time = monotonic();
     KV info; std::istringstream in(readPath(proc+"/meminfo")); std::string line;

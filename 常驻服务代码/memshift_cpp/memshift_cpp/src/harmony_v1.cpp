@@ -168,6 +168,7 @@ std::map<std::string,Bytes> parseKiBFields(const std::string& text) {
     return fields;
 }
 
+//lzx-note
 struct ProcessAggregate {
     std::size_t listed=0, statusRead=0, smapsRead=0;
     double smapsElapsedMs=0;
@@ -247,6 +248,11 @@ std::string safeMemberRaw(const std::string& raw) {
     return out;
 }
 
+//lzx-note
+/**
+ * 逐个打开配置中的cgroup目录，读取组统计和成员进程
+ * 再读取 /proc/<pid>/status, smaps_rollup, stat 等信息
+ */
 ProcessAggregate sampleProcesses(const std::vector<std::uint64_t>& ids,
     const std::map<std::uint64_t,ProcStat>& previous,std::map<std::uint64_t,ProcStat>& current,
     bool readSmaps=true) {
@@ -3007,22 +3013,33 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
             catch(const std::exception& e) { event(eventLog,"ERROR","oracle_ledger",e.what()); oracleHaltedEvents.insert(oracleActionEvent); ++samplingErrors; }
             oracleAction.reset();
         }
+        // 若异步 Oracle 动作跨过事件截止时间仍未返回，记为结果未知并停止该事件继续调度。
         if(oracleAction && monotonic()>=oracleActionDeadline && !oracleUnknownDeadlineRows.count(oracleActionId)) {
             OracleActionResult r; r.actionId=oracleActionId; r.eventId=oracleActionEvent; r.deadline=oracleActionDeadline; r.backend=options.oracleBackend; r.status="reserved_action_still_inflight_at_deadline_unknown"; r.overlap=true; appendOracleLedger(options,r); oracleUnknownDeadlineRows.insert(oracleActionId); oracleHaltedEvents.insert(oracleActionEvent);
         }
         if(oracleAction) oracleFastPollActive=true;
         else if(oracleHaltedEvents.count(oracleActionEvent)) oracleFastPollActive=false;
+        // tick 是已进入的循环轮数；--ticks N 时达到 N 轮后在下一次条件检查退出。
         ++tick;
-        if(!options.control.empty()) {
+
+//lzx-note 测试逻辑end===================================================================================================================================================================================================================================================================
+
+
+    //lzx-note 常驻逻辑--运行时控制开关 begin===================================================================================================================================================================================================================================================================
+
+        // 每轮刷新运行时控制（暂停、前台保护、临时 boost）；状态未知时后续写入会被关闸。
+        // 先判断是否配置了控制文件路径，控制文件是用来给服务运行期间动态暂停或保护应用的。
+        if(!options.control.empty()) {  //lzx-note-normal
             const std::string previousControlState=controlState;
             try {
-                control=parseControl(readPath(options.control));
-                controlState=control.paused?"paused":"active";
+                //读取控制文本，决定是否暂停，哪些应用需要保护，以及是否临时提高内存预留目标
+                control=parseControl(readPath(options.control));  //lzx-note-normal
+                controlState=control.paused?"paused":"active";  //lzx-note-normal
             } catch(const std::exception&) {
-                control=Control{}; controlState="unknown";
+                control=Control{}; controlState="unknown";  //lzx-note-normal
             }
             if(controlState!=previousControlState)
-                event(eventLog,"INFO","control","control state changed to "+controlState+"; sampling continues; writes gated by control");
+                event(eventLog,"INFO","control","control state changed to "+controlState+"; sampling continues; writes gated by control");  //lzx-note-normal
         }
         System sys;
         try { sys=systemSample(options.proc); }
@@ -3056,6 +3073,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
             std::to_string(recentSnapshot.epoch)});
         bool hasMemPsi=false,hasIoPsi=false;
         std::string memoryPsi,ioPsi;
+        // 读取PSI
         if(fullObservationTick) {
             memoryPsi=rawPSI(options.proc+"/pressure/memory",hasMemPsi);
             ioPsi=rawPSI(options.proc+"/pressure/io",hasIoPsi);
@@ -3230,7 +3248,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                         reason="protected: app_score/oom_score_adj/member identity does not confirm background eligibility";
                     else reason="forecast reserve satisfied";
                 }
-                else {
+                else {  //lzx-note-normal
                     try {
                         if(options.dailyKnownCapacity && !capacity) throw std::runtime_error("known_capacity_sample_authority");
                         std::optional<ProbeIdentity> probeIdentity;
@@ -3345,25 +3363,25 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                                 } else { action="daily_submission_refused"; reason="one pending worker or admission halted"; }
                             }
                             else {
-                                FD writer(::openat(dir.get(),"memory.force_shrink_anon",O_WRONLY|O_CLOEXEC|O_NOFOLLOW));
-                                if(writer.get()<0) throw error("open memory.force_shrink_anon");
-                                const std::string payload=std::to_string(ratio);
-                                const auto started=monotonic();
-                                const auto count=::write(writer.get(),payload.data(),payload.size());
-                                const int writeErr=count<0?errno:0;
-                                const auto elapsed=(monotonic()-started)*1000;
+                                FD writer(::openat(dir.get(),"memory.force_shrink_anon",O_WRONLY|O_CLOEXEC|O_NOFOLLOW));  //lzx-note-normal
+                                if(writer.get()<0) throw error("open memory.force_shrink_anon");  //lzx-note-normal
+                                const std::string payload=std::to_string(ratio);  //lzx-note-normal
+                                const auto started=monotonic();  //lzx-note-normal
+                                const auto count=::write(writer.get(),payload.data(),payload.size());  //lzx-note-normal
+                                const int writeErr=count<0?errno:0;  //lzx-note-normal
+                                const auto elapsed=(monotonic()-started)*1000;  //lzx-note-normal
                                 if(count!=static_cast<ssize_t>(payload.size())) {
-                                    action="write_error"; reason="vendor write failed errno="+std::to_string(writeErr);
-                                    nextProbeAction=monotonic()+60.0; tickDecision="ratio_write_error";
+                                    action="write_error"; reason="vendor write failed errno="+std::to_string(writeErr);  //lzx-note-normal
+                                    nextProbeAction=monotonic()+60.0; tickDecision="ratio_write_error";  //lzx-note-normal
                                 } else {
-                                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                                    appProbeMinute[appIndex].charge(monotonic(),safeCap);
-                                    globalProbeMinute.charge(monotonic(),safeCap);
-                                    nextProbeAction=monotonic()+std::max(10.0,options.cooldownSec);
-                                    tickDecision="ratio_submitted"; tickTarget=app.name; tickBudget=safeCap; actionThisTick=true;
-                                    action="accepted_ratio_"+payload;
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(250));  //lzx-note-normal
+                                    appProbeMinute[appIndex].charge(monotonic(),safeCap);  //lzx-note-normal
+                                    globalProbeMinute.charge(monotonic(),safeCap);  //lzx-note-normal
+                                    nextProbeAction=monotonic()+std::max(10.0,options.cooldownSec);  //lzx-note-normal
+                                    tickDecision="ratio_submitted"; tickTarget=app.name; tickBudget=safeCap; actionThisTick=true;  //lzx-note-normal
+                                    action="accepted_ratio_"+payload;  //lzx-note-normal
                                     try {
-                                        const auto postPids=processIds(dir.get());
+                                        const auto postPids=processIds(dir.get());  //lzx-note-normal
                                         if(postPids!=ids || (probeProfile?!sameProbe(dir.get(),options.root,app.path,*probeIdentity):
                                            !backgroundEligible(dir.get(),app,ids,currentProcesses)))
                                             throw std::runtime_error("post-write process identity or background eligibility changed");
@@ -3376,9 +3394,9 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                                         reason="write_ms="+elapsedText.str()+"; planned_bytes="+budgetText+"; observed_rssanon_drop_bytes="+std::to_string(observedDrop)+" (diagnostic only)";
                                         event(eventLog,"INFO",app.name,"probe reclaim accepted ratio="+payload+" planned_bytes="+budgetText+" observed_rssanon_drop_bytes="+std::to_string(observedDrop));
                                     } catch(const std::exception& e) {
-                                        reason="write accepted; feedback unknown: "+std::string(e.what());
-                                        nextProbeAction=monotonic()+60.0;
-                                        event(eventLog,"WARN",app.name,reason);
+                                        reason="write accepted; feedback unknown: "+std::string(e.what());  //lzx-note-normal
+                                        nextProbeAction=monotonic()+60.0;  //lzx-note-normal
+                                        event(eventLog,"WARN",app.name,reason);  //lzx-note-normal
                                     }
                                 }
                             }
@@ -3394,7 +3412,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                 }
             }
             if(action!="none") { tickDecision=action; tickTarget=app.name; }
-            appLog.row({std::to_string(unixMillis()),Schema,app.name,app.path,appPopulated(dir.get()),current,
+            appLog.row({std::to_string(unixMillis()),Schema,app.name,app.path,appPopulated(dir.get()),current,  //lzx-note-normal
                     "unknown_unverified",optionalNumber(values.anonKiB),optionalNumber(values.zramKiB),optionalNumber(values.eswapKiB),
                     rawCounter(*stat,"inactive_anon"),rawCounter(*stat,"inactive_file"),optionalRaw(dir.get(),"memory.anon_refault"),
                     std::to_string(processes.listed),std::to_string(processes.statusRead),std::to_string(processes.smapsRead),
@@ -3424,6 +3442,8 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
         }
         const double oracleSubmitInterval=options.oracleProfile=="peak_transition_os_snapshot"
             ?static_cast<double>(options.oracleProfileActionIntervalMs)/1000.0:1.0;
+        // Oracle profile 读取外部事件计划、核验身份和时限，并可能排队独立异步动作。
+        // 这是测试专用路径，与普通 harmony-v1 观察循环不是同一套策略。
         if(oracleProfile && !oracleAction &&
            (oracleFastPollActive || monotonic()-lastOracleSubmit>=oracleSubmitInterval)) {
             try {
@@ -3941,7 +3961,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                 }
             } catch(const std::exception& e) { event(eventLog,"ERROR","oracle_schedule",e.what()); }
         }
-        if(fullObservationTick) systemLog.row({std::to_string(unixMillis()),Schema,std::to_string(sys.total),std::to_string(sys.available),
+        if(fullObservationTick) systemLog.row({std::to_string(unixMillis()),Schema,std::to_string(sys.total),std::to_string(sys.available),  //lzx-note-normal
             std::to_string(sys.free),std::to_string(sys.swapTotal),std::to_string(sys.swapFree),
             std::to_string(forecast.predictedAvailable),std::to_string(static_cast<long long>(forecast.declineBytesPS)),
             memoryPsi,hasMemPsi?"present_unverified":"unknown",ioPsi,hasIoPsi?"present_unverified":"unknown",
@@ -3970,7 +3990,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
             std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(alignedSleep));
         while(!stopping() && std::chrono::steady_clock::now()<deadline) {
             const auto remain=deadline-std::chrono::steady_clock::now();
-            std::this_thread::sleep_for(std::min(remain,std::chrono::duration_cast<decltype(remain)>(std::chrono::milliseconds(100))));
+            std::this_thread::sleep_for(std::min(remain,std::chrono::duration_cast<decltype(remain)>(std::chrono::milliseconds(100))));  //lzx-note-normal
         }
     }
     if(dailyExecutor) {
