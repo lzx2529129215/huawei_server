@@ -23,7 +23,7 @@ struct Request {
     std::string qualification="office_score_adj";
     std::uint64_t sequence=0, groupDevice=0, groupInode=0;
     std::size_t appIndex=0;
-    std::map<std::uint64_t,std::uint64_t> members;
+    std::map<std::uint64_t,std::uint64_t> members,memberUids;
     Bytes reservedBytes=0, keepBytes=0, minBatch=0;
     unsigned plannedRatio=0;
     double knownLeadSec=35; // Immutable event horizon, never a proof TTL.
@@ -95,14 +95,18 @@ inline std::optional<Bytes> refreshedGap(const Options& options,const System& fr
 inline bool capacityOptions(const Options& o) {
     return o.dailyKnownCapacity && o.dailyKnownStrength && o.dailyKnownFutureFreeOnly &&
         o.dailyAsync && !o.oracleMode && o.oracleProofSource=="legacy" &&
-        o.dailyOwnedOsSnapshot && o.dailyDiskMode=="owned_apply" && o.minBatch>=64*MiB;
+        o.dailyOwnedOsSnapshot &&
+        (o.dailyDiskMode=="owned_apply" || (o.dailyBrowserDonorProfile && o.dailyDiskMode=="off")) &&
+        o.minBatch>=(o.dailyBrowserDonorProfile?MiB:64*MiB);
 }
 // Immutable request authority plus the adapter's fresh known::gap and owned proof
 // are both required. A caller cannot obtain 60% by setting a numeric ceiling.
 inline bool strengthAuthority(const Request& r) {
     if((r.knownLeadSec!=35 && !r.knownCapacity) || !r.knownStrength || !r.knownEvent || r.qualification!="owned_os_snapshot" ||
-       r.keepBytes<(r.knownCapacity?128:512)*MiB || (r.knownCapacity && r.minBatch<64*MiB) || !r.groupInode || !deadlineAllows(r,r.reservedAt) ||
-       !known::memberMatches(*r.knownEvent,r.groupPath,r.members)) return false;
+       r.keepBytes<(r.knownCapacity?128:512)*MiB ||
+       (r.knownCapacity && r.minBatch<(r.knownEvent && r.knownEvent->schemaVersion==3?MiB:64*MiB)) ||
+       !r.groupInode || !deadlineAllows(r,r.reservedAt) ||
+       !known::memberMatches(*r.knownEvent,r.groupPath,r.members,r.memberUids)) return false;
     try { known::validate(*r.knownEvent,r.reservedAt,Unlimited,0,r.knownLeadSec); } catch(...) { return false; }
     return true;
 }

@@ -28,6 +28,8 @@ CMakeCache.txt
 *.hsp
 *.app
 *.pdb
+/tools/browser_trial*/native/device_retry_controller
+/tools/browser_trial*/native/build_manifest.json
 
 # Runtime results, captured evidence, and local validation output
 results/

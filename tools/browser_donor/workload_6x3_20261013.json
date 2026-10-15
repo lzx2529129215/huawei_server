@@ -1,0 +1,165 @@
+{
+  "schema": "browser-donor-workload-v1",
+  "bundle": "com.huawei.hmos.browser",
+  "window_count": 6,
+  "pages_per_window": 3,
+  "expected_page_sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+  "windows": [
+    {
+      "label": "w1",
+      "pages": [
+        {
+          "label": "w1p1",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w1p1_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w1p1_20261013.html"
+        },
+        {
+          "label": "w1p2",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w1p2_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w1p2_20261013.html"
+        },
+        {
+          "label": "w1p3",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w1p3_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w1p3_20261013.html"
+        }
+      ]
+    },
+    {
+      "label": "w2",
+      "pages": [
+        {
+          "label": "w2p1",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w2p1_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w2p1_20261013.html"
+        },
+        {
+          "label": "w2p2",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w2p2_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w2p2_20261013.html"
+        },
+        {
+          "label": "w2p3",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w2p3_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w2p3_20261013.html"
+        }
+      ]
+    },
+    {
+      "label": "w3",
+      "pages": [
+        {
+          "label": "w3p1",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w3p1_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w3p1_20261013.html"
+        },
+        {
+          "label": "w3p2",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w3p2_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w3p2_20261013.html"
+        },
+        {
+          "label": "w3p3",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w3p3_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w3p3_20261013.html"
+        }
+      ]
+    },
+    {
+      "label": "w4",
+      "pages": [
+        {
+          "label": "w4p1",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w4p1_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w4p1_20261013.html"
+        },
+        {
+          "label": "w4p2",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w4p2_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w4p2_20261013.html"
+        },
+        {
+          "label": "w4p3",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w4p3_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w4p3_20261013.html"
+        }
+      ]
+    },
+    {
+      "label": "w5",
+      "pages": [
+        {
+          "label": "w5p1",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w5p1_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w5p1_20261013.html"
+        },
+        {
+          "label": "w5p2",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w5p2_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w5p2_20261013.html"
+        },
+        {
+          "label": "w5p3",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w5p3_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w5p3_20261013.html"
+        }
+      ]
+    },
+    {
+      "label": "w6",
+      "pages": [
+        {
+          "label": "w6p1",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w6p1_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w6p1_20261013.html"
+        },
+        {
+          "label": "w6p2",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w6p2_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w6p2_20261013.html"
+        },
+        {
+          "label": "w6p3",
+          "path": "../../results/real_app_donor_scout_20261013/memshift_public_page_20261013.html",
+          "sha256": "2a791ac3d6567f14d5613f03cad6504b1f6fe9050e5e28851d5c6f3184db0506",
+          "device_path": "/storage/media/100/local/files/Docs/memshift_bd_w6p3_20261013.html",
+          "ui_uri": "/storage/Users/currentUser/memshift_bd_w6p3_20261013.html"
+        }
+      ]
+    }
+  ]
+}

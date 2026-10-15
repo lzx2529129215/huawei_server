@@ -1,0 +1,14 @@
+{
+  "schema": "realapp-pressure-incidents-v1",
+  "incidents": [
+    {
+      "id": "20261014_tmpfs_unlink_kernel_panic",
+      "device": "3QC0124C03000514",
+      "status": "unresolved",
+      "maximum_diagnostic_mib": 8,
+      "reason": "23,721 MiB 占位结束清理时，rm PID 28168 删除本轮 fill；同一 PID 在 fscache_get_entries / unlink 路径出现内核异常，随后 HM_PANIC_SYSMGR 重启。不得把 8 MiB 恢复成功外推为大文件恢复可靠。",
+      "evidence": "results/realapp_dataset_20261014/fill_calibration01/panic_evidence/",
+      "resolution_required": "保存内核修复或替代清理方案的验证证据后再更新此记录；当前仅允许最多 8 MiB 的流程诊断。"
+    }
+  ]
+}

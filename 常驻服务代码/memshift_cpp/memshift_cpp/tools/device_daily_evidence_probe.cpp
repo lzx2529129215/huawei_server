@@ -3,7 +3,9 @@
 #include "../src/device_proc_reader.hpp"
 #include "../src/daily_disk_backend.hpp"
 #include <csignal>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 using namespace ms;using namespace ms::harmony_v1;
 namespace {
 std::pair<std::uint64_t,std::uint64_t> singleton(const std::string& members,const std::string& stat) {
@@ -31,8 +33,50 @@ int fake() {
         "Pid: 17\nUid: 23 23 23 23\n",bundle,"1:memory:/"+leaf+"\n","17\n",stat,aa,table,details,100,now);};
     if(!parse(101).verified || parse(102.6).verified) throw std::runtime_error("fake_parser_ttl_failed");
     bool denied=false;try {(void)singleton("17 18",stat);} catch(...) {denied=true;}
-    if(!denied || daily::disk::ownedLeaf("100/com.huawei.hmos.browser_23")) throw std::runtime_error("fake_scope_failed");
+    const std::string browserLeaf="100/com.huawei.hmos.browser_20020064";
+    Options unregisteredBrowser;
+    Options registeredBrowser;registeredBrowser.dailyAsync=true;registeredBrowser.dailyOwnedOsSnapshot=true;
+    registeredBrowser.dailyBrowserDonorProfile=true;registeredBrowser.dailyDiskMode="owned_apply";
+    if(!denied || !daily::disk::ownedLeaf(browserLeaf) ||
+       daily::disk::ownedQualification(unregisteredBrowser,browserLeaf,2) ||
+       !daily::disk::ownedQualification(registeredBrowser,browserLeaf,21) ||
+       daily::disk::ownedLeaf("100/com.huawei.hmos.browser_0") ||
+       daily::disk::ownedLeaf("100/com.huawei.hmos.browser_20020064x"))
+        throw std::runtime_error("fake_scope_failed");
     std::cout<<"RO_PROVIDER_PROBE_FAKE_PASS\n";return 0;
+}
+std::string readPlan(const std::string& path) {
+    std::ifstream in(path,std::ios::binary);
+    if(!in) throw std::runtime_error("browser_plan_unreadable");
+    std::string text((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+    if(text.empty() || text.size()>65536) throw std::runtime_error("browser_plan_size_invalid");
+    return text;
+}
+int browserPlanProbe(const std::string& planPath) {
+    const auto plan=parseDeviceOraclePlan(readPlan(planPath));
+    if(plan.schemaVersion!=3 || plan.donors.size()!=1 ||
+       plan.donors.front().bundle!="com.huawei.hmos.browser")
+        throw std::runtime_error("browser_plan_required");
+    const auto& donor=plan.donors.front();
+    const std::string leaf="100/"+donor.bundle+"_"+donor.uid;
+    const auto groupPath="/dev/memcg/"+leaf;
+    struct stat metadata{};
+    const int group=open(groupPath.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    if(group<0) throw std::runtime_error("browser_group_unreadable");
+    const bool meta=fstat(group,&metadata)==0;close(group);
+    if(!meta) throw std::runtime_error("browser_group_metadata_unknown");
+    const double begin=device_proc::boot();const std::atomic<bool> stop{false};
+    const auto result=sampleDeviceDailyEvidence(leaf,static_cast<std::uint64_t>(metadata.st_dev),
+        static_cast<std::uint64_t>(metadata.st_ino),donor.members,donor.memberUids,stop);
+    const double end=device_proc::boot();
+    std::cout<<"{\"scope\":\"readonly_browser_group\",\"bundle\":\""<<donor.bundle
+        <<"\",\"primary_pid\":"<<donor.pid<<",\"primary_uid\":"<<donor.uid
+        <<",\"member_count\":"<<donor.members.size()<<",\"group_device\":"<<metadata.st_dev
+        <<",\"group_inode\":"<<metadata.st_ino<<",\"aa_state\":\""<<result.aaState
+        <<"\",\"aa_reason\":\""<<escaped(result.aaReason)<<"\",\"verified\":"
+        <<(result.verified?"true":"false")<<",\"reason\":\""<<escaped(result.reason)
+        <<"\",\"elapsed_ms\":"<<(end-begin)*1000<<"}\n";
+    return result.verified?0:1;
 }
 }
 int main(int argc,char** argv) {
@@ -61,6 +105,7 @@ int main(int argc,char** argv) {
                 <<",\"reason\":\""<<escaped(proof.reason)<<"\"}\n";
             return 0;
         }
+        if(argc==3 && std::string(argv[1])=="--browser-plan") return browserPlanProbe(argv[2]);
         if(argc!=3 || std::string(argv[1])!="--leaf") throw std::runtime_error("usage: --leaf 100/owned_bundle_uid OR --fake");
         const std::string leaf=argv[2];if(!daily::disk::ownedLeaf(leaf)) throw std::runtime_error("owned_test_leaf_required");
         const double begin=device_proc::boot();if(begin<=0) throw std::runtime_error("boottime_unknown");
@@ -79,7 +124,7 @@ int main(int argc,char** argv) {
         if(!device_proc::boundedRead("/proc/"+pid+"/stat",65536,false,stat)) throw std::runtime_error("member_stat_unreadable");
         const auto identity=singleton(members,stat);const std::map<std::uint64_t,std::uint64_t> expected={{identity.first,identity.second}};
         const auto dev=static_cast<std::uint64_t>(metadata.st_dev),ino=static_cast<std::uint64_t>(metadata.st_ino);
-        const std::atomic<bool> stop{false};const auto result=sampleDeviceDailyEvidence(leaf,dev,ino,expected,stop);
+        const std::atomic<bool> stop{false};const auto result=sampleDeviceDailyEvidence(leaf,dev,ino,expected,{},stop);
         const double end=device_proc::boot();
         std::cout<<"{\"scope\":\"readonly_single_owned_leaf\",\"pid\":"<<identity.first<<",\"start_ticks\":"<<identity.second
             <<",\"group_device\":"<<dev<<",\"group_inode\":"<<ino<<",\"member_count\":1,\"uid\":"<<result.uid

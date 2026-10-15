@@ -1,0 +1,69 @@
+{
+  "schema": "browser_donor_trial_profile_85g_v1",
+  "variant": "6x3_real_browser_donor_85g_calibration",
+  "donor_profile": {
+    "bundle": "com.huawei.hmos.browser",
+    "windows": 6,
+    "pages_per_window": 3,
+    "member_count": 21,
+    "member_count_semantics": "initial_observed_reference_only; each run registers its full verified current set",
+    "member_count_min": 1,
+    "member_count_max": 64,
+    "anon_capacity_gate": {
+      "sample_count": 3,
+      "max_spread_fraction": 0.02,
+      "reference": "per-run measured three-sample mean; optimized phase matches completed baseline within 2%"
+    }
+  },
+  "targets": [
+    "io.memscene.scene4.workload.a14",
+    "io.memscene.scene4.workload.a15",
+    "io.memscene.scene4.workload.a16"
+  ],
+  "load": {
+    "target_daily_mib": 1536,
+    "target_peak_mib": 8704,
+    "future_increment_mib": 21504,
+    "target_file_mib": 256,
+    "target_count": 3,
+    "peak_fill_workers": 4,
+    "retry_slots": 10,
+    "retry_slot_seconds": 30,
+    "window_seconds": 330,
+    "hold_seconds": 420,
+    "future_lead_seconds": 90,
+    "oom_horizon_seconds": 930,
+    "disk_mode": "owned_apply",
+    "disk_whole_work_cap_mib": 8192,
+    "allow_zram": true,
+    "forbid_new_disk_swapout": true,
+    "peak_gate": {
+      "helper": "frozen gate_window v7",
+      "close_device_boottime_offset_seconds": -1,
+      "reopen_device_boottime_offset_seconds": 930,
+      "watchdog_restore_device_boottime_offset_seconds": 935,
+      "disk_swapout": "forbidden",
+      "zram": "allowed"
+    }
+  },
+  "events": {
+    "clock_domain": "CLOCK_BOOTTIME",
+    "perfect_future_event": true,
+    "basis": "fixed_device_boottime_T",
+    "focus_offsets_seconds": [5, 10, 15, 20, 25, 30],
+    "focus_target_rotation": ["a14", "a15", "a16", "a14", "a15", "a16"]
+  },
+  "outcomes": {
+    "primary": "kernel_oom_kill",
+    "renderer_exit_is_oom": false,
+    "popup_is_primary": false
+  },
+  "comparison": {
+    "first_valid_pairs": 1,
+    "planned_pairs": 3,
+    "baseline_control": "paused=true",
+    "optimized_control": "paused=false",
+    "same_load_schedule": true,
+    "reprepare_browser_each_run": true
+  }
+}

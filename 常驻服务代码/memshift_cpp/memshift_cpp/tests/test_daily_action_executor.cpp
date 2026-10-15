@@ -84,6 +84,70 @@ void dailyKnownFutureTests() {
     bool mixed=false;try{parseConfig("daily_recent_reserve=true\n"+cfg);}catch(...){mixed=true;}require(mixed,"known and recent inputs cannot mix");
     bool wrong=false;try{parseConfig("daily_async=true\ndaily_owned_os_snapshot=true\ndaily_known_future_free_only=true\ndaily_known_plan_file=/fake/plan\ndaily_known_evidence_ledger=/fake/evidence\n[app office]\npath=100/office_101\nreclaim=true\n");}catch(...){wrong=true;}require(wrong,"office cannot opt into ideal owned event scope");
 }
+void browserKnownFutureTests() {
+    OracleRequest event;event.id="s4_abcdef_c0001_peak_transition";event.caseId="s4_abcdef_c0001";
+    event.schemaVersion=3;event.launch=130;event.needed=19968*MiB;
+    event.planFingerprint=std::string(64,'b');event.proofSequence=4;
+    OracleDonor donor;donor.bundle="com.huawei.hmos.browser";donor.uid="20020064";
+    donor.pid=35456;donor.start=23427036;donor.members={{35456,23427036},{35739,23427171},{35838,23427213}};
+    donor.memberUids={{35456,20020064},{35739,20100026},{35838,20100027}};
+    donor.dailyReady=donor.procVerified=donor.windowReady=donor.lifecycleClear=true;
+    donor.readyAt=90;donor.procStart=donor.start;donor.aaPid=donor.pid;donor.aaUid=20020064;
+    donor.aaState="BACKGROUND";donor.windowVisible=false;donor.windowFocused=false;
+    donor.aaObserved=donor.windowObserved=donor.procObserved=donor.lifecycleObserved=100;
+    event.donors.push_back(donor);
+    System system;system.total=32ULL*1024*MiB;system.free=14ULL*1024*MiB;
+    require(daily::known::gap(event,1024*MiB,system,101,90)==6656*MiB,
+        "browser group registration admits one group-level event");
+    require(daily::known::memberMatches(event,"100/com.huawei.hmos.browser_20020064",donor.members,donor.memberUids),
+        "browser registration matches complete group PID/start/realUid membership");
+    auto changedMembers=donor.members;changedMembers.erase(35739);
+    require(!daily::known::memberMatches(event,"100/com.huawei.hmos.browser_20020064",changedMembers,donor.memberUids),
+        "browser registration rejects changed group membership");
+    auto changedUids=donor.memberUids;changedUids[35739]=20100099;
+    require(!daily::known::memberMatches(event,"100/com.huawei.hmos.browser_20020064",donor.members,changedUids),
+        "browser registration rejects changed renderer UID membership");
+    auto malformed=event;malformed.donors[0].members.erase(35456);
+    bool rejected=false;try{(void)daily::known::gap(malformed,1024*MiB,system,101,90);}catch(...){rejected=true;}
+    require(rejected,"browser registration must include primary PID generation");
+
+    const std::string config=
+        "daily_async=true\ndaily_known_lead_sec=90\ndaily_known_capacity=true\n"
+        "daily_known_strength=true\ndaily_known_future_free_only=true\n"
+        "daily_known_plan_file=/fake/browser.plan\ndaily_known_evidence_ledger=/fake/browser.evidence\n"
+        "daily_owned_os_snapshot=true\ndaily_browser_donor_profile=true\ndaily_disk_mode=off\n"
+        "min_batch_mb=16\nbatch_mb=256\napp_per_minute_mb=512\nmax_per_minute_mb=1024\n"
+        "[app browser]\npath=100/com.huawei.hmos.browser_20020064\nreclaim=true\nmin_keep_mb=128\n";
+    const auto parsed=parseConfig(config);
+    require(parsed.options.dailyBrowserDonorProfile && daily::capacityOptions(parsed.options),
+        "browser profile opts into known group capacity while disk remains off");
+    require(daily::disk::ownedQualification(parsed.options,parsed.apps[0].path,9) &&
+        !daily::disk::diskApplyEnabled(parsed.options,parsed.apps[0].path,9),
+        "browser profile supports multi-member anonymous reclaim with disk apply disabled");
+    std::string diskConfig=config;
+    diskConfig.replace(diskConfig.find("daily_disk_mode=off"),std::string("daily_disk_mode=off").size(),"daily_disk_mode=owned_apply");
+    const auto appSection=diskConfig.find("[app browser]");
+    require(appSection!=std::string::npos,"browser app section exists in disk config fixture");
+    diskConfig.insert(appSection,"daily_disk_whole_work_mb=512\n");
+    const auto diskParsed=parseConfig(diskConfig);
+    require(daily::disk::diskApplyEnabled(diskParsed.options,diskParsed.apps[0].path,9),
+        "explicit browser profile can opt into multi-member disk backend under owned qualification");
+    auto capacityRequest=request();capacityRequest.app="browser";
+    capacityRequest.groupPath="100/com.huawei.hmos.browser_20020064";
+    capacityRequest.members=donor.members;capacityRequest.memberUids=donor.memberUids;capacityRequest.groupInode=2;
+    capacityRequest.qualification="owned_os_snapshot";capacityRequest.knownEvent=event;
+    capacityRequest.knownStrength=capacityRequest.knownCapacity=true;
+    capacityRequest.hardDeadline=event.launch;capacityRequest.knownLeadSec=90;
+    capacityRequest.keepBytes=128*MiB;capacityRequest.minBatch=16*MiB;
+    capacityRequest.reservedAt=100;
+    require(daily::strengthAuthority(capacityRequest) && daily::capacityAuthority(capacityRequest) &&
+        daily::ratioCeiling(capacityRequest)==95,
+        "browser group registration preserves one app quota and its authorized ratio ceiling");
+    bool duplicateRejected=false;
+    try { (void)parseConfig(config+"\n[app browser_copy]\npath=100/com.huawei.hmos.browser_20020064\nreclaim=true\nmin_keep_mb=128\n"); }
+    catch(...) { duplicateRejected=true; }
+    require(duplicateRejected,"browser group cannot receive duplicate app configuration or quota");
+}
 void knownStrengthAndPairTests() {
     auto r=request();r.knownEvent=knownEvent();r.hardDeadline=130;r.knownStrength=true;
     r.groupPath="100/io.memscene.scene4.workload.a1_101";r.members={{1001,901}};
@@ -613,6 +677,7 @@ int main() {
         knownFutureFreeGapTests();
         require(!Options{}.dailyAsync && !Options{}.dailyMaxSubmissions,"daily options must default off/unlimited");
         dailyKnownFutureTests();
+        browserKnownFutureTests();
         knownStrengthAndPairTests();knownCapacityTests();knownReturnSpacingTests();knownScanAdmissionTests();
         submissionLimit();
         dailyFairnessAndSpacing();

@@ -129,6 +129,7 @@ struct Options {
     bool dailyRecentReserve = false; // Device-observed global consumption proxy; default off.
     double dailyRecentWindowSec = 30, dailyRecentHoldSec = 60, dailyRecentCapFraction = 0.5;
     bool dailyOwnedOsSnapshot = false; // Explicit owned-only anonymous qualification; disk remains independently gated.
+    bool dailyBrowserDonorProfile = false; // Exact one-browser memcg donor profile; group quotas remain per bundle.
     std::string dailyDiskMode = "off"; // off / observe / owned_apply; never enables office-app disk commands.
     Bytes dailyDiskWholeWork = 0; // Logical whole work plus margin; not a physical IO limit.
     std::uint64_t dailyMaxSubmissions = 0; // Non-oracle worker lifetime limit; 0 preserves unlimited admission.

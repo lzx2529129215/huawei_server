@@ -8,7 +8,15 @@ namespace ms::harmony_v1::daily::disk {
 constexpr Bytes Margin=64*MiB;
 // Logical planning slack, precharged once. Never a physical write limit.
 constexpr Bytes PlanningHeadroom=16*MiB;
+inline bool browserLeaf(const std::string& path) {
+    const std::string prefix="100/com.huawei.hmos.browser_";
+    if(path.rfind(prefix,0)!=0) return false;
+    const auto uid=path.substr(prefix.size());
+    if(uid.empty() || uid.find_first_not_of("0123456789")!=std::string::npos) return false;
+    try { return uintValue(uid)>0; } catch(...) { return false; }
+}
 inline bool ownedLeaf(const std::string& path) {
+    if(browserLeaf(path)) return true;
     for(unsigned i=1;i<=13;++i) {
         const std::string prefix="100/io.memscene.scene4.workload.a"+std::to_string(i)+"_";
         if(path.rfind(prefix,0)==0) {
@@ -26,18 +34,30 @@ inline std::optional<Bytes> wholeWork(Bytes zram,Bytes anon) {
 }
 inline bool ownedProtectionScope(const Options& options,const std::string& path) {
     // Protection must survive unknown/multiple members and failed proof.
-    return (options.dailyOwnedOsSnapshot || options.dailyDiskMode=="owned_apply") && ownedLeaf(path);
+    return (options.dailyOwnedOsSnapshot || options.dailyDiskMode=="owned_apply") && ownedLeaf(path) &&
+        (!browserLeaf(path) || options.dailyBrowserDonorProfile);
 }
 inline bool ownedQualification(const Options& options,const std::string& path,std::size_t members,
     bool isolatedProbe=false) {
     // Legacy owned_apply configurations retain their existing qualification.
     // The explicit opt-in permits the same fresh proof for anonymous-only work.
+    if(options.dailyBrowserDonorProfile && browserLeaf(path))
+        return options.dailyAsync && !options.oracleMode && options.oracleProofSource=="legacy" &&
+            !isolatedProbe && options.dailyOwnedOsSnapshot &&
+            (options.dailyDiskMode=="off" || options.dailyDiskMode=="owned_apply") && members>0;
     return options.dailyAsync && !options.oracleMode && options.oracleProofSource=="legacy" &&
         !isolatedProbe && ownedProtectionScope(options,path) && members==1;
 }
 inline bool diskApplyEnabled(const Options& options,const std::string& path,std::size_t members,
     bool isolatedProbe=false) {
     return options.dailyDiskMode=="owned_apply" && ownedQualification(options,path,members,isolatedProbe);
+}
+inline bool registeredBrowserGroup(const Request& r) {
+    if(r.knownEvent && r.knownEvent->schemaVersion==3 && r.knownEvent->donors.size()==1 &&
+       r.knownEvent->donors.front().bundle=="com.huawei.hmos.browser" && !r.members.empty())
+        return r.knownEvent->donors.front().members==r.members &&
+            r.knownEvent->donors.front().memberUids==r.memberUids;
+    return false;
 }
 inline std::string ownedBundle(const std::string& path) {
     return ownedLeaf(path)?path.substr(4,path.rfind('_')-4):std::string{};
@@ -90,7 +110,8 @@ inline std::string blocked(const Request& r,const Evidence& e,double now,Bytes l
        forecastAge<0 || forecastAge>=r.forecastMaxAgeSeconds) return "request_or_forecast_expired";
     if(!e.base.blocked.empty()) return e.base.blocked;
     if(e.base.groupDevice!=r.groupDevice || e.base.groupInode!=r.groupInode ||
-       r.members.size()!=1 || e.base.members!=r.members) return "member_or_group_identity_changed";
+       (r.members.size()!=1 && !registeredBrowserGroup(r)) || e.base.members!=r.members)
+        return "member_or_group_identity_changed";
     if(const auto protectedReason=pairProtection(r,e.base);!protectedReason.empty()) return protectedReason;
     if(!e.base.background || !e.base.controlActive) return "background_or_control_changed";
     if(!e.deviceSnapshotVerified || !std::isfinite(e.oldestProof) || e.oldestProof<=0 ||
@@ -144,7 +165,8 @@ inline Result execute(const Request& r,Bytes limit,const Hooks& h) {
             const double age=h.now()-after.oldestProof;
             out.feedbackVerified=after.deviceSnapshotVerified && std::isfinite(age) && age>=0 && age<=2.5 &&
                 after.base.groupDevice==r.groupDevice && after.base.groupInode==r.groupInode &&
-                after.base.members==r.members && after.base.background && after.base.controlActive &&
+                after.base.members==r.members && (r.members.size()==1 || registeredBrowserGroup(r)) &&
+                after.base.background && after.base.controlActive &&
                 after.base.blocked.empty() && after.poolKnown && after.ncZramBytes==0 &&
                 after.base.rssAnonBytes>=r.keepBytes;
             const bool transition=after.eswapBytes>before.eswapBytes && after.zramBytes<before.zramBytes;

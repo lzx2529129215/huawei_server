@@ -1,10 +1,13 @@
 #pragma once
 #include "io.hpp"
+#include <map>
 #include <memory>
 namespace ms::harmony_v1 {
 struct OracleDonor {
     std::string bundle, uid, aaState, evidenceSource;
     std::string writebackFilePath;
+    std::map<std::uint64_t,std::uint64_t> members; // Fresh whole-cgroup PID/start_ticks snapshot.
+    std::map<std::uint64_t,std::uint64_t> memberUids; // Includes isolated renderer UIDs.
     std::uint64_t pid=0, start=0, aaPid=0, aaUid=0, procStart=0;
     std::uint64_t writebackFileDev=0, writebackFileIno=0, writebackFileSize=0;
     bool coldReady=false,dailyReady=false,windowReady=false, windowVisible=true,windowFocused=true,lifecycleClear=false,procVerified=false;

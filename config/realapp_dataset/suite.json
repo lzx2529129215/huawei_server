@@ -1,0 +1,744 @@
+{
+  "schema": "realapp-dd-dataset-v1",
+  "reference_gib": 8,
+  "tmpfs_limit_gib": 32,
+  "baseline_seconds": 60,
+  "action_seconds": 1200,
+  "post_seconds": 60,
+  "watchdog_seconds": 1800,
+  "sampling_ms": 250,
+  "apps": {
+    "抖音": {
+      "bundle": "com.ss.ohpc.ugc.aweme",
+      "form": "native",
+      "ability": "EntryAbility",
+      "module": "electron",
+      "verified": false
+    },
+    "悟空图像": {
+      "bundle": "com.photosir.himirage",
+      "form": "native",
+      "ability": "EntryAbility",
+      "module": "entry",
+      "verified": false
+    },
+    "备忘录": {
+      "bundle": "com.huawei.hmos.notepad",
+      "form": "native",
+      "ability": "MainAbility",
+      "module": "NotepadPhone",
+      "verified": false
+    },
+    "华为视频": {
+      "bundle": "com.huawei.hmsapp.himovie",
+      "form": "native",
+      "ability": "MainAbility",
+      "module": "entry",
+      "verified": false
+    },
+    "WPS": {
+      "bundle": "cn.wps.office.hap",
+      "form": "native",
+      "ability": "PromeAbility",
+      "module": "prome",
+      "verified": false
+    },
+    "海泰浏览器": {
+      "bundle": "com.haitai.htbrowser",
+      "form": "native",
+      "ability": "EntryAbility",
+      "module": "pc_entry",
+      "verified": false
+    },
+    "coremail": {
+      "bundle": "cn.coremail.chordmail",
+      "form": "native",
+      "ability": "MainAbility",
+      "module": "pc",
+      "verified": false,
+      "entry_evidence": "results\\realapp_dataset_20261015\\app_recheck\\packages.json"
+    },
+    "小红书": {
+      "bundle": "com.xingin.xhs_hos",
+      "form": "native",
+      "ability": "EntryAbility",
+      "module": "redbook",
+      "verified": false,
+      "entry_evidence": "results\\realapp_dataset_20261015\\app_recheck\\packages.json"
+    },
+    "飞书": {
+      "bundle": "com.ss.feishu_pc",
+      "form": "native",
+      "ability": "EntryAbility",
+      "module": "chromium",
+      "verified": false,
+      "entry_evidence": "results\\realapp_dataset_20261015\\app_recheck\\packages.json"
+    },
+    "华为浏览器": {
+      "bundle": "com.huawei.hmos.browser",
+      "form": "native",
+      "ability": "MainAbility",
+      "module": "entry",
+      "verified": false
+    },
+    "华为邮箱": {
+      "bundle": "com.huawei.hmos.email",
+      "form": "native",
+      "ability": "EntryAbility",
+      "module": "entry",
+      "verified": false
+    },
+    "微信": {
+      "bundle": "com.tencent.wechat.pc",
+      "form": "native",
+      "ability": "QAbility",
+      "module": "entry",
+      "verified": false,
+      "entry_evidence": "results\\realapp_dataset_20261015\\app_recheck\\packages.json"
+    },
+    "mindmaster": {
+      "bundle": "com.edrawsoft.mindmaster.pc",
+      "form": "native",
+      "ability": "QAbility",
+      "module": "entry",
+      "verified": false
+    },
+    "中望CAD": {
+      "bundle": "com.zwsoft.zwcad.PE",
+      "form": "native",
+      "ability": "EntryAbility",
+      "module": "entry",
+      "verified": false
+    },
+    "钉钉": {
+      "bundle": "com.dingtalk.hmos.pc",
+      "form": "native",
+      "ability": "DTAbility",
+      "module": "entry",
+      "verified": false
+    },
+    "哔哩哔哩": {
+      "bundle": "yylx.danmaku.bili",
+      "form": "native",
+      "ability": "EntryAbility",
+      "module": "entry",
+      "verified": false,
+      "entry_evidence": "results\\realapp_dataset_20261015\\app_recheck\\packages.json"
+    },
+    "亿图图示": {
+      "bundle": "com.edrawsoft.edrawmax.pc",
+      "form": "native",
+      "ability": "QAbility",
+      "module": "entry",
+      "verified": false
+    },
+    "剪映": {
+      "bundle": "com.lemon.lvpro",
+      "form": "native",
+      "ability": "QAbility",
+      "module": "JianyingPro",
+      "verified": false
+    },
+    "日历": {
+      "bundle": "com.huawei.hmos.calendar",
+      "form": "native",
+      "ability": "MainAbility",
+      "module": "phone",
+      "verified": false
+    },
+    "华为音乐": {
+      "bundle": "com.huawei.hmsapp.music",
+      "form": "native",
+      "ability": "MainAbility",
+      "module": "phone",
+      "verified": false
+    }
+  },
+  "scenes": [
+    {
+      "id": "office",
+      "name": "办公协作",
+      "steps": [
+        {
+          "id": "office_01",
+          "app": "日历",
+          "intent": "查看测试日程",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "office_02",
+          "app": "飞书",
+          "intent": "查看测试文档",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "office_03",
+          "app": "WPS",
+          "intent": "打开测试文档和表格并重算",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "office_04",
+          "app": "coremail",
+          "intent": "预览测试附件",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "office_05",
+          "app": "华为邮箱",
+          "intent": "预览测试附件",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "office_06",
+          "app": "微信",
+          "intent": "查看测试文件",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "office_07",
+          "app": "WPS",
+          "intent": "重访并编辑副本",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "media",
+      "name": "视频社交",
+      "steps": [
+        {
+          "id": "media_01",
+          "app": "华为音乐",
+          "intent": "播放测试音频",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "media_02",
+          "app": "抖音",
+          "intent": "切换固定视频列表",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "media_03",
+          "app": "小红书",
+          "intent": "浏览固定图文",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "media_04",
+          "app": "哔哩哔哩",
+          "intent": "播放并拖动进度",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "media_05",
+          "app": "华为视频",
+          "intent": "播放测试视频",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "media_06",
+          "app": "抖音",
+          "intent": "重访视频",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "media_07",
+          "app": "哔哩哔哩",
+          "intent": "重访视频",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "editing",
+      "name": "视频制作",
+      "steps": [
+        {
+          "id": "editing_01",
+          "app": "华为浏览器",
+          "intent": "查看测试素材页",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "editing_02",
+          "app": "悟空图像",
+          "intent": "打开多张大图并编辑",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "editing_03",
+          "app": "剪映",
+          "intent": "导入预览并导出测试视频",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "editing_04",
+          "app": "备忘录",
+          "intent": "编辑测试笔记",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "editing_05",
+          "app": "剪映",
+          "intent": "重访并预览",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "design",
+      "name": "CAD与方案",
+      "steps": [
+        {
+          "id": "design_01",
+          "app": "钉钉",
+          "intent": "查看测试项目资料",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "design_02",
+          "app": "中望CAD",
+          "intent": "打开图纸缩放并切换图层",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "design_03",
+          "app": "亿图图示",
+          "intent": "编辑测试图示",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "design_04",
+          "app": "mindmaster",
+          "intent": "展开测试导图",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "design_05",
+          "app": "WPS",
+          "intent": "编辑测试报告",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "design_06",
+          "app": "中望CAD",
+          "intent": "重访图纸",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "research",
+      "name": "双浏览器资料整理",
+      "steps": [
+        {
+          "id": "research_01",
+          "app": "海泰浏览器",
+          "intent": "打开固定资料页",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "research_02",
+          "app": "华为浏览器",
+          "intent": "打开另一组固定资料页",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "research_03",
+          "app": "coremail",
+          "intent": "预览测试附件",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "research_04",
+          "app": "飞书",
+          "intent": "查看测试文档",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "research_05",
+          "app": "WPS",
+          "intent": "打开资料副本",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "research_06",
+          "app": "海泰浏览器",
+          "intent": "重访资料页",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "research_07",
+          "app": "华为浏览器",
+          "intent": "重访资料页",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "mixed",
+      "name": "混合高峰",
+      "steps": [
+        {
+          "id": "mixed_01",
+          "app": "华为音乐",
+          "intent": "后台播放测试音频",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_02",
+          "app": "WPS",
+          "intent": "打开测试资料",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_03",
+          "app": "中望CAD",
+          "intent": "打开测试图纸",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_04",
+          "app": "悟空图像",
+          "intent": "编辑测试大图",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_05",
+          "app": "剪映",
+          "intent": "预览并导出测试视频",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_06",
+          "app": "华为视频",
+          "intent": "播放测试视频",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_07",
+          "app": "微信",
+          "intent": "查看测试文件",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_08",
+          "app": "钉钉",
+          "intent": "查看测试项目资料",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_09",
+          "app": "剪映",
+          "intent": "重访预览",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        },
+        {
+          "id": "mixed_10",
+          "app": "中望CAD",
+          "intent": "重访图纸",
+          "recipe": {
+            "setup": [],
+            "actions": [],
+            "postcondition": {},
+            "materials": [],
+            "timeout_seconds": 120,
+            "dwell_seconds": 15
+          }
+        }
+      ]
+    }
+  ],
+  "material_root": "D:\\Lzx\\10.5华为pc项目\\results\\realapp_dataset_20261014\\materials",
+  "reset_steps": [],
+  "status": "draft_not_calibrated"
+}

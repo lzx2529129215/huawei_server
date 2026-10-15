@@ -138,6 +138,48 @@ void parserTests() {
     check(!daily::disk::ownedQualification(legacy,leaf,2),"override requires singleton");
     legacy.dailyDiskMode="observe";check(!daily::disk::ownedQualification(legacy,leaf,1),"legacy observe retains score qualification");
 }
+void browserGroupProofTests() {
+    const std::string leaf="100/com.huawei.hmos.browser_20020064";
+    const std::map<std::uint64_t,std::uint64_t> members={{17,91},{18,92}};
+    const std::map<std::uint64_t,std::uint64_t> uids={{17,20020064},{18,20100026}};
+    std::vector<DailyMemberSnapshot> processes;
+    for(const auto& row:members) {
+        const auto uid=uids.at(row.first);
+        DailyMemberSnapshot p;p.pid=row.first;p.uid=uid;p.startTicks=row.second;
+        p.statBefore=device_proc::fakeStat(p.pid,p.startTicks);p.statAfter=p.statBefore;
+        p.status="Pid:\t"+std::to_string(p.pid)+"\nUid:\t"+std::to_string(uid)+" "+std::to_string(uid)+" "+
+            std::to_string(uid)+" "+std::to_string(uid)+"\n";
+        p.cgroup="4:memory:/"+leaf+"\n";p.oomScoreAdj="280\n";
+        processes.push_back(p);
+    }
+    const std::string mm=
+        "| pid uid hostPid realUid act bundleName processName lastBgTimeMS priority\n"
+        "| 17 20020064 0 20020064 100 com.huawei.hmos.browser com.huawei.hmos.browser -1 280\n"
+        "| 18 20020064 17 20100026 100 com.huawei.hmos.browser com.huawei.hmos.browser:render -1 400\n";
+    const std::string aa="AppRunningRecord ID #0\nprocess name [com.huawei.hmos.browser]\npid #17\nuid #20020064\nstate #FOREGROUND\n";
+    const std::string table="WindowName DisplayId Pid WinId\nbrowser0 0 17 9\nbrowser1 0 17 10\ndesktop 0 0 11\nFocus window: 11\nTotal window num: 3\n";
+    const std::map<std::uint64_t,std::string> details={
+        {9,"WindowName: browser0\nWinId: 9\nPid: 17\nIsVisible: false\nParentWindowId: 0\n"},
+        {10,"WindowName: browser1\nWinId: 10\nPid: 17\nIsVisible: false\nParentWindowId: 0\n"}};
+    const auto run=[&](const auto& expected,const auto& expectedUids,const auto& rows,
+                       const std::string& manager,const std::map<std::uint64_t,std::string>& windowDetails) {
+        return parseBrowserDailyGroupEvidence(leaf,expected,expectedUids,17,91,rows,"17\n18\n","18\n17\n",
+            "280\n","280\n","com.huawei.hmos.browser",manager,aa,table,windowDetails,100,101);
+    };
+    const auto valid=run(members,uids,processes,mm,details);
+    if(!valid.verified || valid.aaState!="FOREGROUND")
+        throw std::runtime_error("browser foreground-but-hidden group proof rejected");
+    auto changedUids=uids;changedUids[18]=20100099;
+    if(run(members,changedUids,processes,mm,details).verified)
+        throw std::runtime_error("browser renderer realUid drift accepted");
+    std::string wrongOwner=mm;const auto at=wrongOwner.find("18 20020064 17");
+    wrongOwner.replace(at,std::string("18 20020064 17").size(),"18 20020064 19");
+    if(run(members,uids,processes,wrongOwner,details).verified)
+        throw std::runtime_error("browser renderer wrong hostPid accepted");
+    auto visibleDetails=details;visibleDetails[10]="WindowName: browser1\nWinId: 10\nPid: 17\nIsVisible: true\n";
+    if(run(members,uids,processes,mm,visibleDetails).verified)
+        throw std::runtime_error("visible browser window accepted");
+}
 void qualificationTests() {
     check(!Options{}.dailyOwnedOsSnapshot,"new qualification defaults off");
     for(const auto* mode:{"off","observe","owned_apply"}) {
@@ -302,5 +344,5 @@ void diskTests() {
     check(done && done->uncertain && worker.busy() && charged==request().reservedBytes && f.writes==1,"unknown halts shared worker and retains reservation");
 }
 }
-int main() {std::signal(SIGALRM,SIG_DFL);alarm(30);try {parserTests();capacityPlanAndWorkerTests();qualificationTests();diskTests();std::cout<<"FAKE_DAILY_DISK_PASS\n";return 0;}
+int main() {std::signal(SIGALRM,SIG_DFL);alarm(30);try {parserTests();browserGroupProofTests();capacityPlanAndWorkerTests();qualificationTests();diskTests();std::cout<<"FAKE_DAILY_DISK_PASS\n";return 0;}
     catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}}

@@ -8,25 +8,34 @@ inline Bytes target(Bytes needed,Bytes reserve,Bytes total) {
     return needed+reserve;
 }
 inline bool sameRegistration(const OracleRequest& a,const OracleRequest& b) {
-    if(a.id!=b.id || a.caseId!=b.caseId || a.launch!=b.launch || a.needed!=b.needed ||
+    if(a.schemaVersion!=b.schemaVersion || a.id!=b.id || a.caseId!=b.caseId || a.launch!=b.launch || a.needed!=b.needed ||
        a.planFingerprint!=b.planFingerprint || a.donors.size()!=b.donors.size()) return false;
     for(std::size_t i=0;i<a.donors.size();++i) {
         const auto& x=a.donors[i];const auto& y=b.donors[i];
-        if(x.bundle!=y.bundle || x.uid!=y.uid || x.pid!=y.pid || x.start!=y.start) return false;
+        if(x.bundle!=y.bundle || x.uid!=y.uid || x.pid!=y.pid || x.start!=y.start ||
+           x.members!=y.members || x.memberUids!=y.memberUids) return false;
     }
     return true; // Fresh proof sequence may advance; registration may not.
 }
 inline void validate(const OracleRequest& e,double now,Bytes total,Bytes reserve,double preparationSeconds=35) {
     (void)target(e.needed,reserve,total);
-    if(e.schemaVersion!=2 || e.id.empty() || e.id!=e.caseId+"_peak_transition" ||
+    if((e.schemaVersion!=2 && e.schemaVersion!=3) || e.id.empty() || e.id!=e.caseId+"_peak_transition" ||
        e.planFingerprint.size()!=64 || e.planFingerprint.find_first_not_of("0123456789abcdef")!=std::string::npos ||
        !e.proofSequence || !std::isfinite(now) || !std::isfinite(e.launch) ||
        !std::isfinite(preparationSeconds) || preparationSeconds<35 || preparationSeconds>300 ||
-       now<e.launch-preparationSeconds || now>=e.launch || e.donors.size()!=13)
+       now<e.launch-preparationSeconds || now>=e.launch ||
+       !((e.schemaVersion==2 && e.donors.size()==13) ||
+         (e.schemaVersion==3 && e.donors.size()==1)))
         throw std::runtime_error("known_future_event_unknown_outside_window_or_expired");
     std::set<std::string> bundles,uids;std::set<std::uint64_t> pids;
     for(const auto& d:e.donors) {
-        bool owned=false;for(unsigned i=1;i<=13;++i) if(d.bundle=="io.memscene.scene4.workload.a"+std::to_string(i)) owned=true;
+        bool owned=false;
+        if(e.schemaVersion==2) {
+            for(unsigned i=1;i<=13;++i) if(d.bundle=="io.memscene.scene4.workload.a"+std::to_string(i)) owned=true;
+        } else if(e.schemaVersion==3 && d.bundle=="com.huawei.hmos.browser" && !d.members.empty() &&
+                  d.members.count(d.pid) && d.members.at(d.pid)==d.start &&
+                  d.memberUids.size()==d.members.size() && d.memberUids.count(d.pid) &&
+                  d.memberUids.at(d.pid)==uintValue(d.uid)) owned=true;
         const auto uid=uintValue(d.uid);
         if(!owned || !uid || !d.pid || !d.start || !d.dailyReady || !std::isfinite(d.readyAt) ||
            d.readyAt<=0 || d.readyAt>=e.launch || !bundles.insert(d.bundle).second ||
@@ -34,6 +43,13 @@ inline void validate(const OracleRequest& e,double now,Bytes total,Bytes reserve
            d.procStart!=d.start || d.aaPid!=d.pid || d.aaUid!=uid || !d.windowReady || !d.lifecycleClear ||
            (d.aaState!="BACKGROUND" && d.aaState!="FOREGROUND"))
             throw std::runtime_error("known_future_registered_identity_incomplete");
+        if(e.schemaVersion==3) {
+            for(const auto& member:d.members) {
+                if(!member.first || !member.second || !d.memberUids.count(member.first) ||
+                   !d.memberUids.at(member.first) || !d.members.count(member.first))
+                    throw std::runtime_error("known_future_browser_member_identity_incomplete");
+            }
+        }
         // This event validates registration. Per-target foreground/window protection
         // is independently re-read by the existing daily owned provider before write.
         for(double t:{d.aaObserved,d.windowObserved,d.procObserved,d.lifecycleObserved})
@@ -42,10 +58,15 @@ inline void validate(const OracleRequest& e,double now,Bytes total,Bytes reserve
     }
 }
 inline bool memberMatches(const OracleRequest& e,const std::string& leaf,
-    const std::map<std::uint64_t,std::uint64_t>& members) {
-    if(members.size()!=1) return false;
-    for(const auto& d:e.donors) if(leaf=="100/"+d.bundle+"_"+d.uid)
-        return members.begin()->first==d.pid && members.begin()->second==d.start;
+    const std::map<std::uint64_t,std::uint64_t>& members,
+    const std::map<std::uint64_t,std::uint64_t>& memberUids={}) {
+    for(const auto& d:e.donors) if(leaf=="100/"+d.bundle+"_"+d.uid) {
+        if(e.schemaVersion==3 && d.bundle=="com.huawei.hmos.browser")
+            return !members.empty() && d.members==members && d.memberUids==memberUids &&
+                members.count(d.pid) && members.at(d.pid)==d.start && memberUids.count(d.pid) &&
+                memberUids.at(d.pid)==uintValue(d.uid);
+        return members.size()==1 && members.begin()->first==d.pid && members.begin()->second==d.start;
+    }
     return false;
 }
 inline Bytes gap(const OracleRequest& e,Bytes reserve,const System& sys,double now,double preparationSeconds=35) {

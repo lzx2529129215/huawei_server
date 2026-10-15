@@ -202,6 +202,7 @@ inline Configuration parseConfig(const std::string& text) {
         else if(k=="daily_recent_hold_sec") o.dailyRecentHoldSec=realValue(v);
         else if(k=="daily_recent_cap_fraction") o.dailyRecentCapFraction=realValue(v);
         else if(k=="daily_owned_os_snapshot") o.dailyOwnedOsSnapshot=boolValue(v);
+        else if(k=="daily_browser_donor_profile") o.dailyBrowserDonorProfile=boolValue(v);
         else if(k=="daily_disk_mode") o.dailyDiskMode=v;
         else if(k=="daily_disk_whole_work_mb") o.dailyDiskWholeWork=mbValue(v);
         else if(k=="daily_max_submissions") o.dailyMaxSubmissions=uintValue(v);
@@ -316,11 +317,14 @@ inline Configuration parseConfig(const std::string& text) {
         "oracle_known_future_free_only requires device-proven oracle peak-transition disk preparation");
     check(o.dailyKnownLeadSec>=35 && o.dailyKnownLeadSec<=300 && (o.dailyKnownLeadSec==35 || o.dailyKnownCapacity),"daily_known_lead_sec: 35..300; extended horizon requires known-owned capacity");
     check(!o.dailyKnownCapacity || (o.dailyKnownStrength && o.dailyKnownFutureFreeOnly && o.dailyAsync &&
-        !o.oracleMode && o.dailyOwnedOsSnapshot && o.dailyDiskMode=="owned_apply" && o.minBatch>=64*MiB),
-        "daily_known_capacity requires known-strength exact-owned mixed authority and min_batch_mb>=64");
+        !o.oracleMode && o.dailyOwnedOsSnapshot &&
+        (o.dailyDiskMode=="owned_apply" || (o.dailyBrowserDonorProfile && o.dailyDiskMode=="off")) &&
+        o.minBatch>=(o.dailyBrowserDonorProfile?MiB:64*MiB)),
+        "daily_known_capacity requires owned event authority and a supported minimum batch");
     check(!o.dailyKnownStrength || (o.dailyKnownFutureFreeOnly && o.dailyAsync && !o.oracleMode &&
-        o.dailyOwnedOsSnapshot && o.dailyDiskMode=="owned_apply"),
-        "daily_known_strength requires registered known future, owned daily and explicit mixed backend");
+        o.dailyOwnedOsSnapshot && (o.dailyDiskMode=="owned_apply" ||
+        (o.dailyBrowserDonorProfile && o.dailyDiskMode=="off"))),
+        "daily_known_strength requires registered known future and owned daily policy");
     check(!o.dailyKnownFutureFreeOnly || (o.dailyAsync && !o.oracleMode && !o.oracleKnownFutureFreeOnly &&
         !o.dailyRecentReserve && o.oracleProofSource=="legacy" && o.dailyOwnedOsSnapshot &&
         !o.dailyKnownPlan.empty() && o.dailyKnownPlan.front()=='/' && !o.dailyKnownLedger.empty() &&
@@ -336,6 +340,19 @@ inline Configuration parseConfig(const std::string& text) {
         "daily_recent_reserve requires non-oracle daily_async");
     check(!o.dailyOwnedOsSnapshot || (o.dailyAsync && !o.oracleMode && o.oracleProofSource=="legacy"),
         "daily_owned_os_snapshot requires non-oracle daily_async");
+    if(o.dailyBrowserDonorProfile) {
+        check(o.dailyAsync && o.dailyKnownCapacity && o.dailyKnownStrength && o.dailyKnownFutureFreeOnly &&
+              o.dailyOwnedOsSnapshot && (o.dailyDiskMode=="off" || o.dailyDiskMode=="owned_apply") && !o.oracleMode &&
+              o.oracleProofSource=="legacy" && o.minBatch>=MiB,
+              "browser donor profile requires known-capacity daily async, owned proof and disk off or owned_apply");
+        unsigned browserDonors=0;
+        for(const auto& app:c.apps) if(app.reclaim) {
+            check(app.name=="browser" && app.path.rfind("100/com.huawei.hmos.browser_",0)==0,
+                  "browser donor profile permits one exact browser memcg entry");
+            ++browserDonors;
+        }
+        check(browserDonors==1,"browser donor profile requires exactly one browser reclaim entry");
+    }
     check(o.dailyDiskMode=="off" || o.dailyDiskMode=="observe" || o.dailyDiskMode=="owned_apply","daily_disk_mode: off/observe/owned_apply");
     check(o.dailyDiskMode=="off" || (o.dailyAsync && !o.oracleMode && o.oracleProofSource=="legacy"),"daily disk requires non-oracle daily_async");
     check(o.dailyDiskMode!="owned_apply" || (o.dailyDiskWholeWork>=o.minBatch &&
@@ -366,7 +383,16 @@ inline Configuration parseConfig(const std::string& text) {
     }
     if(o.dailyKnownFutureFreeOnly) {
         std::set<unsigned> owned;
+        unsigned browserOwned=0;
         for(const auto& app:c.apps) if(app.reclaim) {
+            if(o.dailyBrowserDonorProfile) {
+                const std::string prefix="100/com.huawei.hmos.browser_";
+                const auto uid=app.path.rfind(prefix,0)==0?app.path.substr(prefix.size()):std::string{};
+                check(app.name=="browser" && !uid.empty() && uid.find_first_not_of("0123456789")==std::string::npos &&
+                      uintValue(uid)>0 && app.keep>=128*MiB,
+                      "browser known future reclaim entry must be exact browser leaf with keep>=128MiB");
+                ++browserOwned;continue;
+            }
             unsigned role=0;
             for(unsigned i=1;i<=13;++i) {
                 const std::string prefix="100/io.memscene.scene4.workload.a"+std::to_string(i)+"_";
@@ -378,7 +404,9 @@ inline Configuration parseConfig(const std::string& text) {
             check(!o.dailyKnownCapacity || app.keep>=128*MiB,"known capacity keep must be at least128MiB");
             check(role && owned.insert(role).second,"daily known future reclaim scope requires unique owned donor leaves a1-a13");
         }
-        check(owned.size()==13,"daily known future requires all thirteen registered owned donor leaves");
+        if(o.dailyBrowserDonorProfile) check(browserOwned==1 && owned.empty(),
+            "browser known future requires one registered whole-app donor leaf");
+        else check(owned.size()==13,"daily known future requires all thirteen registered owned donor leaves");
     }
     check(!c.apps.empty(),"configure at least one [app NAME]");
     for(std::size_t i=0;i<c.apps.size();++i) {

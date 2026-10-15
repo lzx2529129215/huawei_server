@@ -437,7 +437,7 @@ std::optional<Bytes> dailyWorkerGap(const Options& options,const System& sys,con
         if(!knownEvidence || !request.knownEvent) return {};
         const auto latest=knownEvidence->current("daily_final:"+request.actionId);
         if(!daily::known::sameRegistration(*request.knownEvent,latest) ||
-           !daily::known::memberMatches(latest,request.groupPath,request.members)) return {};
+           !daily::known::memberMatches(latest,request.groupPath,request.members,request.memberUids)) return {};
         // Event lookup precedes the final control and Free/deadline read.
         const auto control=parseControl(readPath(options.control));
         if(control.paused || daily::disk::targetProtected(options,request.app,request.groupPath,control.protectedApps)) return Bytes{0};
@@ -498,7 +498,8 @@ daily::Result performDailyAction(const Options& options,const App& app,const dai
             }
             if(request.qualification=="owned_os_snapshot" && !probeProfile &&
                daily::disk::ownedQualification(options,app.path,request.members.size(),probeProfile)) {
-                const auto proof=sampleDeviceDailyEvidence(app.path,request.groupDevice,request.groupInode,request.members,cancelled);
+                const auto proof=sampleDeviceDailyEvidence(app.path,request.groupDevice,request.groupInode,
+                    request.members,request.memberUids,cancelled);
                 e.background=proof.verified;e.authorityExpires=proof.verified?proof.oldest+2.5:0;
                 if(proof.aaParsed) e.qualificationDiagnostic="aa_matches="+std::to_string(proof.aaMatchCount)+
                     ";aa_state="+proof.aaState+";aa_reason="+proof.aaReason;
@@ -569,8 +570,9 @@ daily::Result performDailyDiskAction(const Options& options,const App& app,const
             throw std::runtime_error("known_capacity_adapter_authority");
         if(request.knownStrength && (!options.dailyKnownStrength || !options.dailyKnownFutureFreeOnly ||
            !daily::strengthAuthority(request))) throw std::runtime_error("known_strength_adapter_authority");
-        if(request.qualification!="owned_os_snapshot" || !daily::disk::diskApplyEnabled(options,app.path,request.members.size()))
-            throw std::runtime_error("disk_requires_explicit_owned_singleton_mode");
+        if(request.qualification!="owned_os_snapshot" || !daily::disk::diskApplyEnabled(options,app.path,request.members.size()) ||
+           (request.members.size()>1 && !daily::disk::registeredBrowserGroup(request)))
+            throw std::runtime_error("disk_requires_explicit_owned_group_mode");
         FD root(::open(options.root.c_str(),O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW));
         if(root.get()<0) throw error("daily disk root open");
         FD dir=openBeneath(root.get(),app.path);
@@ -588,7 +590,8 @@ daily::Result performDailyDiskAction(const Options& options,const App& app,const
             }
             // Guard read occurs before final AA/WMS/proc proof. No global writes.
             requireOracleDiskBackendEnabled();e.backendEnabled=true;
-            const auto proof=sampleDeviceDailyEvidence(app.path,request.groupDevice,request.groupInode,request.members,cancelled);
+            const auto proof=sampleDeviceDailyEvidence(app.path,request.groupDevice,request.groupInode,
+                request.members,request.memberUids,cancelled);
             e.deviceSnapshotVerified=proof.verified;e.oldestProof=proof.oldest;e.proofReason=proof.reason;
             const auto ids=processIds(dir.get());
             for(const auto pid:ids) {const auto p=parseProcStat(pid,readPath(options.proc+"/"+std::to_string(pid)+"/stat"));
@@ -3203,6 +3206,8 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                     capacityScope.groupInode=static_cast<std::uint64_t>(group.st_ino);
                 }
                 for(const auto& p:currentProcesses) capacityScope.members[p.first]=p.second.startTicks;
+                if(dailyKnownSnapshot && options.dailyBrowserDonorProfile && !dailyKnownSnapshot->donors.empty())
+                    capacityScope.memberUids=dailyKnownSnapshot->donors.front().memberUids;
             }
             const bool capacity=daily::capacityOptions(options) && daily::capacityAuthority(capacityScope) &&
                 !probeProfile && daily::disk::ownedQualification(options,app.path,ids.size(),probeProfile);
@@ -3271,13 +3276,23 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                                 request.app=app.name;request.groupPath=app.path;request.appIndex=appIndex;request.backend="force_swapout";
                                 request.qualification="owned_os_snapshot";
                                 request.groupDevice=static_cast<std::uint64_t>(group.st_dev);request.groupInode=static_cast<std::uint64_t>(group.st_ino);
-                                request.members.emplace(ids.front(),currentProcesses.at(ids.front()).startTicks);
+                                if(options.dailyBrowserDonorProfile && daily::disk::browserLeaf(app.path)) {
+                                    for(const auto pid:ids) {
+                                        const auto member=currentProcesses.find(pid);
+                                        if(member==currentProcesses.end() || !member->second.startTicks)
+                                            throw std::runtime_error("daily disk browser member identity unknown");
+                                        request.members.emplace(pid,member->second.startTicks);
+                                    }
+                                } else request.members.emplace(ids.front(),currentProcesses.at(ids.front()).startTicks);
                                 request.reservedBytes=plan.reservation;request.keepBytes=dailyKeep;request.minBatch=options.minBatch;
                                 request.reservedAt=monotonic();request.maxAgeSeconds=2.5;request.forecastSampledAt=sys.time;
                                 request.forecastMaxAgeSeconds=std::max(1.0,options.horizonSec);
                                 request.recentTarget=recentSnapshot;
                                 if(options.dailyKnownFutureFreeOnly) {
-                                    if(!dailyKnownSnapshot || !daily::known::memberMatches(*dailyKnownSnapshot,request.groupPath,request.members))
+                                    if(dailyKnownSnapshot && options.dailyBrowserDonorProfile && !dailyKnownSnapshot->donors.empty()) {
+                                        request.memberUids=dailyKnownSnapshot->donors.front().memberUids;
+                                    }
+                                    if(!dailyKnownSnapshot || !daily::known::memberMatches(*dailyKnownSnapshot,request.groupPath,request.members,request.memberUids))
                                         throw std::runtime_error("daily known event registered member mismatch");
                                     request.knownEvent=dailyKnownSnapshot;request.hardDeadline=dailyKnownSnapshot->launch;request.knownStrength=options.dailyKnownStrength;request.knownCapacity=options.dailyKnownCapacity;request.knownLeadSec=options.dailyKnownLeadSec;
                                 }
@@ -3342,7 +3357,10 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
                                 request.forecastSampledAt=sys.time; request.forecastMaxAgeSeconds=std::max(1.0,options.horizonSec);
                                 request.recentTarget=recentSnapshot;
                                 if(options.dailyKnownFutureFreeOnly) {
-                                    if(!dailyKnownSnapshot || !daily::known::memberMatches(*dailyKnownSnapshot,request.groupPath,request.members))
+                                    if(dailyKnownSnapshot && options.dailyBrowserDonorProfile && !dailyKnownSnapshot->donors.empty()) {
+                                        request.memberUids=dailyKnownSnapshot->donors.front().memberUids;
+                                    }
+                                    if(!dailyKnownSnapshot || !daily::known::memberMatches(*dailyKnownSnapshot,request.groupPath,request.members,request.memberUids))
                                         throw std::runtime_error("daily known event registered member mismatch");
                                     request.knownEvent=dailyKnownSnapshot;request.hardDeadline=dailyKnownSnapshot->launch;request.knownStrength=options.dailyKnownStrength;request.knownCapacity=options.dailyKnownCapacity;request.knownLeadSec=options.dailyKnownLeadSec;
                                 }
