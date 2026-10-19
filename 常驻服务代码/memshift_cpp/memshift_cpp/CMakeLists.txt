@@ -9,6 +9,9 @@ add_executable(memshiftd src/memshiftd.cpp src/harmony_v1.cpp src/device_oracle_
 target_link_libraries(memshiftd PRIVATE Threads::Threads)
 add_executable(memshiftctl src/memshiftctl.cpp)
 add_executable(compare_runs tools/compare_runs.cpp)
+# Linux OOM lab workload (linux_lab/); not used by the Harmony backends.
+add_executable(memlab_app linux_lab/memlab_app.cpp)
+target_link_libraries(memlab_app PRIVATE Threads::Threads)
 add_executable(test_policy tests/test_policy.cpp)
 add_executable(test_harmony_v1 tests/test_harmony_v1.cpp src/harmony_v1.cpp src/device_oracle_evidence.cpp)
 target_link_libraries(test_harmony_v1 PRIVATE Threads::Threads)

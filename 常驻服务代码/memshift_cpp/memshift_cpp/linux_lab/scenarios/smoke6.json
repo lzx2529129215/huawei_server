@@ -1,0 +1,17 @@
+{
+ "name": "smoke6",
+ "note": "6-app pipeline check: 4 background donors, 2 peak apps peaking together.",
+ "scope": {"memory_max_mib": 2048, "swap_max_mib": 2048},
+ "duration_s": 120,
+ "memshiftd": {"reserve_mb": 128, "ready_free_mb": 32, "startup_grace_sec": 10, "io_some_limit_pct": 50,
+               "max_boost_mb": 4096, "batch_mb": 128, "max_per_minute_mb": 8192, "app_per_minute_mb": 2048,
+               "alpha": 1.0, "anon_weight": 1.0, "keep_ratio": 0.2, "episode_fraction": 0.5, "cooldown_sec": 1},
+ "apps": [
+  {"name": "bg01", "role": "background", "start_s": 0, "anon_mib": 280, "clean_mib": 30, "dirty_mib": 40, "dirty_rate_mib_s": 4, "oom_adj": 990},
+  {"name": "bg02", "role": "background", "start_s": 3, "anon_mib": 280, "clean_mib": 30, "dirty_mib": 40, "dirty_rate_mib_s": 4, "oom_adj": 980},
+  {"name": "bg03", "role": "background", "start_s": 6, "anon_mib": 280, "clean_mib": 30, "dirty_mib": 40, "dirty_rate_mib_s": 4, "oom_adj": 970},
+  {"name": "bg04", "role": "background", "start_s": 9, "anon_mib": 280, "clean_mib": 30, "dirty_mib": 40, "dirty_rate_mib_s": 4, "oom_adj": 960},
+  {"name": "pk01", "role": "peak", "start_s": 12, "anon_mib": 32, "peak_at_s": 70, "peak_mib": 900, "hold_s": 15, "oom_adj": 100},
+  {"name": "pk02", "role": "peak", "start_s": 14, "anon_mib": 32, "peak_at_s": 70, "peak_mib": 900, "hold_s": 15, "oom_adj": 100}
+ ]
+}
