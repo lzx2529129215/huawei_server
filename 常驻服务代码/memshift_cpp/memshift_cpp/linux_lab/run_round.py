@@ -311,6 +311,12 @@ def main():
     timeline = sorted(sc["timeline"], key=lambda e: e["t"])
     duration = sc["duration_s"]
 
+    # Each round writes a few GiB of temporary files into the WSL disk image (on C:)
+    # and swap lives on C:; refuse to start when either is close to full.
+    for mount in ("/", "/mnt/c"):
+        if os.path.isdir(mount) and shutil.disk_usage(mount).free < 20 * 1024 * MiB:
+            sys.exit(f"less than 20 GiB free on {mount}; not starting the round")
+
     rd = Path(args.out) / f"{sc['name']}_{args.mode}{args.tag}_{args.round_id}"
     if rd.exists():
         shutil.rmtree(rd)
