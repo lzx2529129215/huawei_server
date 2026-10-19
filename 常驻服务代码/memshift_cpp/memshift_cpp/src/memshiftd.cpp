@@ -109,7 +109,7 @@ class Worker {
             // Revalidate immediately before writing; at most ONE bounded job is in flight.
             Features fresh=j.features; fresh.now=r.before;
             Bytes liveBoost=ctl.until>unixSeconds()?ctl.boost:0;
-            liveBoost=std::min(liveBoost,sub(r.sysBefore->total/2,std::min(options_.reserve,r.sysBefore->total/2)));
+            liveBoost=std::min(liveBoost,boostCap(options_,r.sysBefore->total));
             const Forecast recheck{sub(r.sysBefore->available,j.expectedDrop),0};
             const Bytes liveGap=deficit(options_,*r.sysBefore,recheck,liveBoost);
             auto b=donorBudget(options_,j.app,fresh,*r.sysBefore,std::min(liveGap,j.requested),j.requested,
@@ -367,7 +367,7 @@ int run(const Args& args) {
         } catch(const std::exception& e) { block="control_invalid"; if(lastBlock!=block) event("ERROR","control",e.what()); }
         Bytes boost=(ctl.until>unixSeconds())?ctl.boost:0;
         // Never target impossible host reserves from a mistaken launch hint.
-        boost=std::min(boost,sub(s.total/2,std::min(o.reserve,s.total/2)));
+        boost=std::min(boost,boostCap(o,s.total));
         const Bytes gap=deficit(o,s,f,boost);
         if(!episode && gap>=o.minBatch) {
             episode=true;

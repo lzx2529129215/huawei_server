@@ -269,6 +269,7 @@ inline Configuration parseConfig(const std::string& text) {
         else if(k=="swap_reserve_mb") o.swapReserve=mbValue(v);
         else if(k=="log_max_mb") o.logMax=mbValue(v);
         else if(k=="max_boost_mb") o.maxBoost=mbValue(v);
+        else if(k=="boost_cap_fraction") o.boostCapFraction=realValue(v);
         else throw std::runtime_error("unknown daemon key: " + k);
     };
     while (std::getline(in,line)) {
@@ -310,6 +311,7 @@ inline Configuration parseConfig(const std::string& text) {
     check(o.ioSomeLimit>0 && o.ioSomeLimit<=100 && o.memoryFullLimit>0 && o.memoryFullLimit<=100 && o.appSomeLimit>0 && o.appSomeLimit<=100,"PSI limits: (0,100]");
     check(o.minBatch>=MiB && o.batch>=o.minBatch && (o.oracleMode || o.batch<=(o.dailyKnownCapacity?1536:(o.dailyKnownStrength?1024:256))*MiB),"batch_mb exceeds mode-specific limit or is below min_batch_mb");
     check(o.perMinute>=o.batch && o.appPerMinute>=o.minBatch && o.logMax>=MiB,"invalid rate/log limits");
+    check(o.boostCapFraction>0 && o.boostCapFraction<=1,"boost_cap_fraction: (0,1]");
     if(o.oracleMode) {
         check(!o.oracleSchedule.empty() && !o.oracleLedger.empty(),"oracle mode requires separate schedule and ledger files");
         check(o.oracleBatch>=MiB && o.oracleGlobalCap>=o.oracleBatch && o.oracleCaseCap>=o.oracleBatch && o.oracleAppCap>=o.oracleBatch,"invalid oracle independent caps");

@@ -19,6 +19,14 @@ the slice's available memory (free + clean page cache + half of reclaimable
 slab, as in linux_scope.hpp) drops below low_mib; it re-arms only after staying
 at or above rearm_mib for rearm_s.
 
+Whitelist scenarios (scenario "cases"): a launch_group op cold-starts a group
+of apps together (the user clicks them all); each app runs its typical task
+peak peak_after_s seconds after it is ready, holds it, then closes. The three
+acceptance conditions are checked per case on the group's apps. The kill
+policy can be two-level lmkd-like ("levels"), and startup failures follow the
+Harmony framework: a startup attempt (START to STARTUP_READY) ended by a kill;
+attempts that simply never got ready are startup_timeout and not counted.
+
 Kills: kernel OOM kills come from the kernel log (oom-kill lines whose
 task_memcg is an app unit). The optional policy killer is lmkd-like: when the
 slice's memory stall within a sliding window exceeds a threshold it SIGKILLs the
@@ -98,7 +106,44 @@ def daily_mib(a):
     return a.get("anon_mib", 0) + a.get("clean_mib", 0) + a.get("dirty_mib", 0) + 4
 
 
+def app_daily(a):
+    return a.get("cal_daily_mib", daily_mib(a))
+
+
+def app_peak(a):
+    return a.get("cal_peak_mib", daily_mib(a) + a.get("peak_mib", 0))
+
+
+def case_checks(sc):
+    """Acceptance conditions per case, on the apps launched together.
+    (2) uses the strictest reading: every app that is open (residents plus the
+    group) and also all apps of the scenario together stay within M."""
+    m = sc["scope"]["memory_max_mib"]
+    apps = {a["name"]: a for a in sc["apps"]}
+    residents = [a for a in sc["apps"] if a["role"] == "resident"]
+    all_daily = sum(app_daily(a) for a in sc["apps"])
+    out = []
+    for c in sc["cases"]:
+        g = [apps[n] for n in c["apps"]]
+        out.append({
+            "case": c["id"], "apps": c["apps"],
+            "max_single_peak_mib": max(app_peak(a) for a in g),
+            "open_daily_sum_mib": sum(app_daily(a) for a in g) + sum(app_daily(a) for a in residents),
+            "group_peak_sum_mib": sum(app_peak(a) for a in g),
+            "group_peak_ratio": round(sum(app_peak(a) for a in g) / m, 3),
+        })
+    return {
+        "memory_max_mib": m, "source": "calibrated" if all("cal_peak_mib" in a for a in sc["apps"]) else "nominal",
+        "all_apps_daily_sum_mib": all_daily, "cases": out,
+        "single_peak_le_M": all(c["max_single_peak_mib"] <= m for c in out),
+        "daily_sum_le_M": all_daily <= m and all(c["open_daily_sum_mib"] <= m for c in out),
+        "peak_sum_ge_1_2M": all(c["group_peak_sum_mib"] >= 1.2 * m for c in out),
+    }
+
+
 def contract_checks(sc):
+    if sc.get("cases"):
+        return case_checks(sc)
     m = sc["scope"]["memory_max_mib"]
     daily = [daily_mib(a) for a in sc["apps"]]
     peak = [daily_mib(a) + a.get("peak_mib", 0) for a in sc["apps"]]
@@ -135,7 +180,7 @@ def memshiftd_config(sc, rd):
     lines = ["[daemon]"] + [f"{k}={v}" for k, v in o.items()]
     for a in sc["apps"]:
         lines += [f"[app {a['name']}]", f"path={SCOPE_REL}/{unit(a['name'])}",
-                  f"reclaim={'true' if a['role'] == 'background' else 'false'}",
+                  f"reclaim={'false' if a['role'] == 'peak' else 'true'}",
                   f"min_keep_mb={a.get('min_keep_mb', 32)}"]
     return "\n".join(lines) + "\n"
 
@@ -158,7 +203,7 @@ class PolicyKiller:
         self.last_kill = -1e9
         self.kills = []
 
-    def poll(self, now, lru, alive):
+    def poll(self, now, lru, alive, adj=None):
         p = psi(read(SCOPE / "memory.pressure"))
         if "some_total" not in p:
             return None
@@ -170,16 +215,31 @@ class PolicyKiller:
             return None
         some_ms = (self.hist[-1][1] - self.hist[0][1]) / 1000
         full_ms = (self.hist[-1][2] - self.hist[0][2]) / 1000
-        if some_ms < self.cfg.get("some_ms", 1e9) and full_ms < self.cfg.get("full_ms", 1e9):
-            return None
-        victims = [n for n in lru if n in alive]
+        level = None
+        if "levels" in self.cfg:
+            # lmkd-like: each level makes processes with oom_adj >= min_adj eligible;
+            # the most severe triggered level wins. Highest adj first, then LRU.
+            for i, lv in enumerate(self.cfg["levels"]):
+                if some_ms >= lv.get("some_ms", 1e9) or full_ms >= lv.get("full_ms", 1e9):
+                    level = i
+            if level is None:
+                return None
+            min_adj = self.cfg["levels"][level]["min_adj"]
+            order = {n: i for i, n in enumerate(lru)}
+            victims = sorted((n for n in lru if n in alive and adj.get(n, 0) >= min_adj),
+                             key=lambda n: (-adj.get(n, 0), order[n]))
+        else:
+            if some_ms < self.cfg.get("some_ms", 1e9) and full_ms < self.cfg.get("full_ms", 1e9):
+                return None
+            victims = [n for n in lru if n in alive]
         if not victims:
             return None
         victim = victims[0]
         sh(["systemctl", "--user", "kill", "-s", "SIGKILL", unit(victim)], check=False)
         self.last_kill = now
         self.hist.clear()
-        rec = {"t": now, "app": victim, "some_ms": round(some_ms, 1), "full_ms": round(full_ms, 1)}
+        rec = {"t": now, "app": victim, "some_ms": round(some_ms, 1), "full_ms": round(full_ms, 1),
+               "level": level, "adj": adj.get(victim) if adj else None}
         self.kills.append(rec)
         return victim
 
@@ -234,6 +294,49 @@ def parse_app_logs(path):
             rec[k] = v
         events.append(rec)
     return events
+
+
+def startup_attempts(evs, app, kills):
+    """Split an app log into startup attempts (one per START). An attempt that
+    never reached STARTUP_READY is a startup failure when a kill of this app
+    falls inside it, otherwise a startup timeout."""
+    starts = [e for e in evs if e["event"] == "START"]
+    out = []
+    for j, st in enumerate(starts):
+        end = starts[j + 1]["t_s"] if j + 1 < len(starts) else 1e12
+        within = [e for e in evs if st["t_s"] <= e["t_s"] < end]
+        ready = next((e for e in within if e["event"] == "STARTUP_READY"), None)
+        if ready:
+            out.append({"t_s": st["t_s"], "outcome": "ready", "ms": float(ready["ms"])})
+            continue
+        # Any kill of this app between this START and the next one ended the attempt.
+        kill = next((k for k in kills if k["app"] == app and st["t_s"] - 0.5 <= k["t_s"] < end), None)
+        enomem = any(e["event"] == "ERROR" for e in within)
+        if kill or enomem:
+            out.append({"t_s": st["t_s"], "outcome": "startup_failure",
+                        "cause": "enomem" if enomem and not kill else kill["source"]})
+        else:
+            out.append({"t_s": st["t_s"], "outcome": "startup_timeout"})
+    return out
+
+
+def oracle_need(group, error):
+    """Largest concurrent extra demand of a launch group over time: each app's
+    daily footprint from launch, plus its task increment during the peak."""
+    edges = []
+    for a, click in group:
+        edges.append((click, daily_mib(a)))
+        if a.get("peak_mib"):
+            start = click + 1.0 + a.get("peak_after_s", 0)
+            edges.append((start, a["peak_mib"]))
+            edges.append((start + 1.0 + a.get("hold_s", 0), -a["peak_mib"]))
+        if a.get("exit_after_s", -1) >= 0:
+            edges.append((click + 2.0 + a.get("peak_after_s", 0) + a.get("hold_s", 0) + a["exit_after_s"], -daily_mib(a)))
+    level = peak = 0
+    for _, d in sorted(edges, key=lambda x: (x[0], x[1])):
+        level += d
+        peak = max(peak, level)
+    return peak * (1 + error)
 
 
 def kernel_log(since_unix):
@@ -361,13 +464,20 @@ def main():
     if args.lead is not None and args.mode != "off":
         cap = int(sc.get("memshiftd", {}).get("max_boost_mb", 4096))
         for e in timeline:
-            if e["op"] != "peak":
+            if e["op"] == "launch_group":
+                gap = e.get("click_gap_s", 0)
+                members = [apps[n] for n in e["apps"]]
+                need = oracle_need([(a, k * gap) for k, a in enumerate(members)], args.error)
+                span = max(k * gap + a.get("peak_after_s", 0) + a.get("hold_s", 0) for k, a in enumerate(members))
+            elif e["op"] == "peak":
+                members = [apps[n] for n in e["apps"]]
+                need = sum(x["peak_mib"] for x in members) * (1 + args.error)
+                span = max(x.get("hold_s", 0) for x in members)
+            else:
                 continue
-            members = [apps[n] for n in e["apps"]]
-            need = sum(x["peak_mib"] for x in members) * (1 + args.error)
             h = {"at_s": max(0.0, e["t"] - args.lead), "peak_at_s": e["t"],
-                 "boost_mib": min(cap, max(1, int(math.ceil(need)))),
-                 "ttl_s": int(min(300, args.lead + max(x.get("hold_s", 0) for x in members) + 15))}
+                 "boost_mib": min(cap, max(1, int(math.ceil(need)))), "need_mib": int(math.ceil(need)),
+                 "ttl_s": int(min(300, args.lead + span + 15))}
             hints.append(h)
             actions.append((h["at_s"], "hint", h))
     actions.sort(key=lambda x: (x[0], x[1] != "hint"))
@@ -376,9 +486,11 @@ def main():
     base_scope = {**kv(read(SCOPE / "memory.events")), **psi(read(SCOPE / "memory.pressure"))}
     base_stat = kv(read(SCOPE / "memory.stat"))
 
-    def launch(a, gen):
+    def launch(a, gen, adj_value=None):
+        adj_value = a.get("oom_adj", 200) if adj_value is None else adj_value
+        cur_adj[a["name"]] = adj_value
         cmd = ["systemd-run", "--user", "-q", f"--unit={unit(a['name'])}", "--slice=memlab",
-               "-p", f"OOMScoreAdjust={a.get('oom_adj', 200)}", str(BUILD / "memlab_app"),
+               "-p", f"OOMScoreAdjust={adj_value}", str(BUILD / "memlab_app"),
                "--name", a["name"], "--log", str(rd / "apps" / f"{a['name']}.log"),
                "--data-dir", str(data), "--anon-mib", str(a.get("anon_mib", 0)),
                "--clean-mib", str(a.get("clean_mib", 0)), "--dirty-mib", str(a.get("dirty_mib", 0)),
@@ -389,10 +501,15 @@ def main():
             cmd += ["--peak-mib", str(a["peak_mib"]), "--peak-rate", str(a.get("peak_rate_mib_s", 0)),
                     "--peak-page-only", str(a.get("peak_page_only", 0)),
                     "--hold", str(a.get("hold_s", 0)), "--peak-deadline", str(a.get("peak_deadline_s", 30))]
+            if "peak_after_s" in a:
+                cmd += ["--peak-after", str(a["peak_after_s"])]
+        if a.get("exit_after_s", -1) >= 0:
+            cmd += ["--exit-after-peak", str(a["exit_after_s"])]
         # A killed unit stays failed until reset; clear it so the name can be reused.
         sh(["systemctl", "--user", "reset-failed", unit(a["name"])], check=False)
         return sh(cmd, check=False).returncode
 
+    cur_adj = {}
     killer = PolicyKiller(policy) if policy else None
     popup = PopupMonitor(popup_cfg) if popup_cfg else None
     foreground = None
@@ -402,7 +519,9 @@ def main():
                  "some_total_us", "full_total_us", "some_avg10", "full_avg10", "alive",
                  "zswap_pool_mib", "zswapped_mib"] +
                 [f"{n}_mib" for n in names])
-    lru = []          # background apps, least recently used first
+    lru = []          # killable apps, least recently used first
+    killable_roles = ("background", "resident", "launch")
+    pending_clicks = []   # (time, app, adj) for staggered clicks inside a launch group
     launched, op_log, hint_log, relaunches = set(), [], [], []
     generation = {n: 0 for n in names}
     next_sample = 0.0
@@ -427,12 +546,25 @@ def main():
                 for n in e["apps"]:
                     launch(apps[n], 0)
                     launched.add(n)
-                    if apps[n]["role"] == "background":
+                    if apps[n]["role"] in killable_roles:
                         lru = [x for x in lru if x != n] + [n]
+            elif e["op"] == "launch_group":
+                # The user clicks every app of the group; the last one ends up in front.
+                if args.mode != "off":
+                    sh([str(ctl), "--file", str(rd / "control.conf"), "--protect",
+                        ",".join(peak_names + e["apps"])], check=False)
+                gap = e.get("click_gap_s", 0)
+                for k, n in enumerate(e["apps"]):
+                    fg = k == len(e["apps"]) - 1
+                    adj_value = apps[n].get("fg_adj", 100) if fg else apps[n].get("oom_adj", 700)
+                    pending_clicks.append((now + k * gap, n, adj_value))
             elif e["op"] == "peak":
                 for n in e["apps"]:
                     sh(["systemctl", "--user", "kill", "-s", "SIGUSR2", unit(n)], check=False)
             elif e["op"] == "return":
+                if args.mode != "off" and sc.get("cases"):
+                    sh([str(ctl), "--file", str(rd / "control.conf"), "--protect",
+                        ",".join(peak_names) or "none"], check=False)
                 for n in e["apps"]:
                     if n in alive:
                         sh(["systemctl", "--user", "kill", "-s", "SIGUSR1", unit(n)], check=False)
@@ -442,8 +574,15 @@ def main():
                         relaunches.append({"t_s": round(now, 2), "app": n})
                     lru = [x for x in lru if x != n] + [n]
             op_log.append({"t_s": round(now, 2), **e})
+        while pending_clicks and pending_clicks[0][0] <= now:
+            _, n, adj_value = pending_clicks.pop(0)
+            generation[n] += 1
+            launch(apps[n], generation[n], adj_value)
+            launched.add(n)
+            lru = [x for x in lru if x != n] + [n]
+            foreground = n
         if killer:
-            killer.poll(boottime(), lru, alive_apps(launched))
+            killer.poll(boottime(), lru, alive_apps(launched), cur_adj)
         if popup:
             popup.poll(boottime(), foreground)
         if now >= next_sample:
@@ -481,6 +620,9 @@ def main():
     policy_kills = killer.kills if killer else []
     for k in policy_kills:
         k["t_s"] = round(k.pop("t") - t0, 2)
+        k["source"] = "policy_kill"
+    for k in kkills:
+        k["source"] = "kernel_oom"
     drops_s = [round(d - t0_unix, 1) for d in drops]
     popups = popup.popups if popup else []
     for pp in popups:
@@ -500,18 +642,31 @@ def main():
         ready = [float(e["ms"]) for e in evs if e["event"] == "DAILY_READY"]
         peaks = [e for e in evs if e["event"] == "PEAK_DONE"]
         begins = sum(1 for e in evs if e["event"] == "PEAK_BEGIN")
-        if apps[n]["role"] == "peak":
+        attempts = startup_attempts(evs, n, kkills + policy_kills) if sc.get("cases") else []
+        if sc.get("cases"):
+            fail = sum(1 for x in attempts if x["outcome"] == "startup_failure")
+            oks = [x["ms"] for x in attempts if x["outcome"] == "ready"]
+            lat = max(oks) if oks else (ready[0] if ready else 0.0)
+        elif apps[n]["role"] == "peak":
             fail = begins - sum(1 for e in peaks if e.get("timeout") == "0")
             lat = max((float(e["ms"]) for e in peaks), default=None)
         else:
             fail = 0 if ready else 1
             lat = ready[0] if ready else None
         touches = [float(e["ms"]) for e in evs if e["event"] == "TOUCH_DONE"]
+        harmony = bool(sc.get("cases"))
         apps_out.append({"app": n, "role": apps[n]["role"], "kernel_oom_kills": kk, "policy_kills": pk, "popups": pops,
-                         "peak_fail": fail if apps[n]["role"] == "peak" else 0, "peak_ms": lat if apps[n]["role"] == "peak" else None,
+                         "peak_fail": fail if (apps[n]["role"] == "peak" or harmony) else 0,
+                         "peak_ms": lat if apps[n]["role"] in ("peak", "launch") else None,
+                         "startup_attempts": attempts,
                          "touch_ms": touches, "relaunches": sum(1 for r in relaunches if r["app"] == n)})
-        lat_s = "" if (fail or lat is None) else f"{lat:.0f}"
-        f = 1 if (fail or lat is None) else 0
+        if harmony:
+            f = fail
+            lat_s = f"{lat:.0f}" if not fail or lat else ""
+            lat_s = lat_s or "0"
+        else:
+            lat_s = "" if (fail or lat is None) else f"{lat:.0f}"
+            f = 1 if (fail or lat is None) else 0
         rows_kernel.append([args.round_id, idx, n, f, pops, kk, lat_s])
         rows_total.append([args.round_id, idx, n, f, pops, kk + pk, lat_s])
     for fname, rows in (("compare_kernel.csv", rows_kernel), ("compare_total.csv", rows_total)):
@@ -532,11 +687,17 @@ def main():
         return round((pts[-1][1] - pts[0][1]) / 1000), round((pts[-1][2] - pts[0][2]) / 1000)
 
     events_out = []
-    peaks_ops = [e for e in timeline if e["op"] == "peak"]
+    peaks_ops = [e for e in timeline if e["op"] in ("peak", "launch_group")]
+    all_attempts = [dict(x, app=a["app"]) for a in apps_out for x in a.get("startup_attempts", [])]
     for j, e in enumerate(peaks_ops):
-        hold = max(apps[n].get("hold_s", 0) for n in e["apps"])
+        if e["op"] == "launch_group":
+            gap = e.get("click_gap_s", 0)
+            hold = max(k * gap + apps[n].get("peak_after_s", 0) + apps[n].get("hold_s", 0)
+                       for k, n in enumerate(e["apps"])) + 3
+        else:
+            hold = max(apps[n].get("hold_s", 0) for n in e["apps"])
         win_end = e["t"] + hold + 10
-        nxt = [x["t"] for x in timeline if x["t"] > e["t"] and x["op"] != "peak"]
+        nxt = [x["t"] for x in timeline if x["t"] > e["t"] and x["op"] not in ("peak",)]
         win_end = min(win_end, nxt[0]) if nxt else win_end
         some, full = stall_between(e["t"] - 1, win_end)
         lats = [float(ev["ms"]) for n in e["apps"] for ev in app_events[n]
@@ -549,6 +710,9 @@ def main():
             "kernel_kills": sum(1 for k in kkills if e["t"] - 1 <= k["t_s"] <= win_end),
             "policy_kills": sum(1 for k in policy_kills if e["t"] - 1 <= k["t_s"] <= win_end),
             "popups": sum(1 for pp in popups if e["t"] - 1 <= pp["t_s"] <= win_end),
+            "startup_failures": sum(1 for x in all_attempts if x["outcome"] == "startup_failure"
+                                    and e["t"] - 1 <= x["t_s"] <= win_end),
+            "case": e.get("case"),
             "stall_some_ms": some, "stall_full_ms": full,
             "peak_ms_max": max(lats) if lats else None,
             "reclaimed_before_mib": round(-sum(float(r["current_change"] or 0) for r in pre) / MiB, 1),
@@ -563,6 +727,10 @@ def main():
         "kills": {"kernel_oom": len(kkills), "policy": len(policy_kills), "total": len(kkills) + len(policy_kills)},
         "popups": len(popups), "popup_cfg": popup_cfg,
         "events_total": len(kkills) + len(policy_kills) + len(popups) + sum(a["peak_fail"] for a in apps_out),
+        "startup_failures": sum(1 for x in all_attempts if x["outcome"] == "startup_failure"),
+        "startup_timeouts": sum(1 for x in all_attempts if x["outcome"] == "startup_timeout"),
+        "unique_incidents": len(kkills) + len(policy_kills) + len(popups) +
+                            sum(1 for x in all_attempts if x["outcome"] == "startup_failure" and x.get("cause") == "enomem"),
         "relaunches": len(relaunches),
         "peak_fail": sum(a["peak_fail"] for a in apps_out),
         "scope_events_delta": {k: end_scope.get(k, 0) - base_scope.get(k, 0) for k in ("oom", "oom_kill", "max")},
@@ -584,9 +752,10 @@ def main():
     }
     (rd / "summary.json").write_text(json.dumps(summary, indent=1))
     brief = {k: summary[k] for k in ("scenario", "mode", "round_id", "tag", "kills", "popups", "events_total",
-                                     "relaunches", "peak_fail",
+                                     "startup_failures", "startup_timeouts", "relaunches", "peak_fail",
                                      "psi_ms", "pswpout_mib", "touch_ms")}
-    brief["events"] = [{k: e[k] for k in ("t", "policy_kills", "kernel_kills", "popups", "stall_some_ms", "peak_ms_max",
+    brief["events"] = [{k: e[k] for k in ("t", "policy_kills", "kernel_kills", "popups", "startup_failures",
+                                          "stall_some_ms", "peak_ms_max",
                                           "reclaimed_before_mib", "drop_caches_in_window")} for e in events_out]
     brief["reclaim_ok_mib"] = summary["memshiftd_reclaim"]["submitted_mib"]
     print(json.dumps(brief))

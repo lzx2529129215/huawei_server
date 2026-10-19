@@ -56,6 +56,12 @@ int main() {
         auto prefix=parseConfig(base+"[app a]\npath=lab.slice2/a.service\n");
         rejects([&]{validateScopeTargets(prefix.options,prefix.apps);},"path-prefix lookalike rejected");
 
+        Options capped; capped.reserve=410*MiB;
+        check(boostCap(capped,16384*MiB)==(8192-410)*MiB,"default boost cap is half of memory minus reserve");
+        capped.boostCapFraction=1.0;
+        check(boostCap(capped,16384*MiB)==(16384-410)*MiB,"boost_cap_fraction=1 allows memory minus reserve");
+        check(parseConfig("[daemon]\nboost_cap_fraction=1.0\n[app a]\npath=x/a\n").options.boostCapFraction==1.0,"boost_cap_fraction parsed");
+        rejects([]{parseConfig("[daemon]\nboost_cap_fraction=1.5\n[app a]\npath=x/a\n");},"boost_cap_fraction above 1 rejected");
         char pattern[]="/tmp/memshift_scope_XXXXXX";
         const char* dir=::mkdtemp(pattern);
         check(dir!=nullptr,"temp fixture directory");

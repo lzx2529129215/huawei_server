@@ -4,6 +4,10 @@
 // SIGUSR1 = the user returns to the app: every daily anonymous page is touched
 // again (swapped-out pages fault back in). SIGUSR2 = a peak: allocate peak_mib
 // more anonymous memory, keep it in use for hold_s, then release it.
+// --peak-after S runs that peak by itself S seconds after DAILY_READY (the app's
+// typical task during a launch). STARTUP_READY marks the end of the startup
+// attempt: after the task's release, or right after DAILY_READY without one.
+// --exit-after-peak S closes the app S seconds after its task (user closes it).
 // Every phase is appended to an event log with write(2) so lines survive an
 // OOM kill.
 #include <algorithm>
@@ -42,6 +46,7 @@ struct Args {
     std::string name = "app", log, dataDir;
     double anonMiB = 0, cleanMiB = 0, dirtyMiB = 0, dirtyRate = 0;
     double peakMiB = 0, peakRate = 0, hold = 0, peakDeadline = 30, ttl = 600, peakPageOnly = 0, compressRatio = 1;
+    double peakAfter = -1, exitAfterPeak = -1;
     std::uint64_t seed = 1;
 };
 
@@ -158,6 +163,7 @@ Args parse(int argc, char** argv) {
     num("anon-mib", a.anonMiB); num("clean-mib", a.cleanMiB); num("dirty-mib", a.dirtyMiB);
     num("dirty-rate", a.dirtyRate); num("peak-mib", a.peakMiB); num("peak-page-only", a.peakPageOnly);
     num("compress-ratio", a.compressRatio);
+    num("peak-after", a.peakAfter); num("exit-after-peak", a.exitAfterPeak);
     num("peak-rate", a.peakRate); num("hold", a.hold); num("peak-deadline", a.peakDeadline); num("ttl", a.ttl);
     if (a.ttl <= 0 || a.ttl > 3600) throw std::runtime_error("ttl must be in (0,3600]");
     if ((a.cleanMiB > 0 || a.dirtyMiB > 0) && a.dataDir.empty()) throw std::runtime_error("files need --data-dir");
@@ -215,7 +221,14 @@ int main(int argc, char** argv) {
         std::snprintf(buf, sizeof(buf), "DAILY_READY ms=%.0f anon_mib=%.0f clean_mib=%.0f dirty_mib=%.0f",
                       (boottime() - start) * 1000, a.anonMiB, a.cleanMiB, a.dirtyMiB);
         logEvent(buf);
-        while (!stopping && boottime() < deadline) {
+        if (a.peakMiB > 0 && a.peakAfter >= 0) {
+            const double at = boottime() + a.peakAfter;
+            while (!stopping && boottime() < at) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (!stopping) runPeak(a, rng);
+        }
+        if (!stopping) logEvent("STARTUP_READY ms=" + std::to_string(static_cast<long>((boottime() - start) * 1000)));
+        const double closeAt = a.exitAfterPeak >= 0 ? boottime() + a.exitAfterPeak : deadline;
+        while (!stopping && boottime() < std::min(deadline, closeAt)) {
             if (touchRequested) {
                 touchRequested = 0;
                 const double t = boottime();

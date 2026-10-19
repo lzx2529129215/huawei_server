@@ -167,6 +167,8 @@ struct Options {
     Bytes minBatch = 8*MiB, batch = 64*MiB, perMinute = 1024*MiB;
     Bytes appPerMinute = 256*MiB, swapReserve = 256*MiB, logMax = 32*MiB;
     Bytes maxBoost = 4096*MiB;
+    // Launch hints are capped at this share of memory minus reserve (default: half).
+    double boostCapFraction = 0.5;
 };
 struct App {
     std::string name, path;
@@ -277,6 +279,12 @@ inline Budget donorBudget(const Options& o, const App& app, const Features& f,
     q -= q%pageSize;
     if (q < o.minBatch) return {0,cold,"budget_too_small"};
     return {q,cold,"eligible"};
+}
+// Never target an impossible reserve from a launch hint: at most
+// boost_cap_fraction of memory minus the base reserve.
+inline Bytes boostCap(const Options& o, Bytes total) {
+    const Bytes capTotal = amount(o.boostCapFraction * static_cast<double>(total));
+    return sub(capTotal, std::min(o.reserve, capTotal));
 }
 inline Bytes deficit(const Options& o, const System& s, const Forecast& f, Bytes boost) {
     return std::max(sub(add(o.reserve,boost),f.predictedAvailable),sub(o.readyFree,s.free));
