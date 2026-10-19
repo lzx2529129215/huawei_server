@@ -13,6 +13,7 @@ import json
 
 
 def build(p):
+    p.memshiftd_scale = p.scale
     if p.scale != 1.0:
         for k in ("browser_anon", "browser_clean", "doc_anon", "doc_clean", "sync_anon", "sync_dirty",
                   "peak_daily", "peak_mib"):
@@ -57,8 +58,13 @@ def build(p):
         "duration_s": e1 + (p.events - 1) * gap + p.tail,
         "policy_kill": None if p.kill_ms <= 0 else {"window_s": 1.0, "some_ms": p.kill_ms, "cooldown_s": p.kill_cooldown},
         "memshiftd": {
-            "reserve_mb": 128, "ready_free_mb": 32, "startup_grace_sec": 20, "io_some_limit_pct": 50,
-            "max_boost_mb": 4096, "batch_mb": 256, "max_per_minute_mb": 16384, "app_per_minute_mb": 4096,
+            # Absolute reserves scale with the machine so 5 GiB and 16 GiB runs stay comparable;
+            # max_boost_mb only bounds the hint file (memshiftd still caps boost at M/2 - reserve).
+            "reserve_mb": int(round(128 * p.memshiftd_scale)), "ready_free_mb": int(round(32 * p.memshiftd_scale)),
+            "startup_grace_sec": 20, "io_some_limit_pct": 50,
+            "max_boost_mb": max(4096, p.memory_max) if p.memshiftd_scale != 1.0 else 4096, "batch_mb": 256,
+            "max_per_minute_mb": 16384,
+            "app_per_minute_mb": 4096,
             "alpha": 1.0, "anon_weight": 1.0, "keep_ratio": 0.2, "episode_fraction": 0.5, "cooldown_sec": 1,
         },
         "apps": apps,

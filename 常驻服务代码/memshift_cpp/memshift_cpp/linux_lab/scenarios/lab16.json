@@ -28,7 +28,8 @@
   "tail": 50,
   "kill_ms": 200.0,
   "kill_cooldown": 1.0,
-  "out": "scenarios/lab16.json"
+  "out": "scenarios/lab16.json",
+  "memshiftd_scale": 3.2
  },
  "scope": {
   "memory_max_mib": 16384,
@@ -42,11 +43,11 @@
   "cooldown_s": 1.0
  },
  "memshiftd": {
-  "reserve_mb": 128,
-  "ready_free_mb": 32,
+  "reserve_mb": 410,
+  "ready_free_mb": 102,
   "startup_grace_sec": 20,
   "io_some_limit_pct": 50,
-  "max_boost_mb": 4096,
+  "max_boost_mb": 16384,
   "batch_mb": 256,
   "max_per_minute_mb": 16384,
   "app_per_minute_mb": 4096,
