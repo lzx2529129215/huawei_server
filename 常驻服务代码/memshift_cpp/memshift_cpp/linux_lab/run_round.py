@@ -322,8 +322,10 @@ def main():
 
     cleanup_units()
     m, s = sc["scope"]["memory_max_mib"], sc["scope"]["swap_max_mib"]
-    sh(["systemctl", "--user", "set-property", "--runtime", "memlab.slice",
-        f"MemoryMax={m}M", f"MemorySwapMax={s}M"])
+    props = [f"MemoryMax={m}M", f"MemorySwapMax={s}M"]
+    if "zswap_max_mib" in sc["scope"]:
+        props.append(f"MemoryZSwapMax={sc['scope']['zswap_max_mib']}M")
+    sh(["systemctl", "--user", "set-property", "--runtime", "memlab.slice"] + props)
     sh(["systemd-run", "--user", "-q", f"--unit={unit('anchor')}", "--slice=memlab",
         "sleep", str(duration + 120)])
     for _ in range(50):
@@ -375,6 +377,7 @@ def main():
                "--data-dir", str(data), "--anon-mib", str(a.get("anon_mib", 0)),
                "--clean-mib", str(a.get("clean_mib", 0)), "--dirty-mib", str(a.get("dirty_mib", 0)),
                "--dirty-rate", str(a.get("dirty_rate_mib_s", 0)), "--ttl", str(duration + 5),
+               "--compress-ratio", str(a.get("compress_ratio", 1)),
                "--seed", str(a.get("seed", zlib.crc32(a["name"].encode()) % 100000 + gen))]
         if a.get("peak_mib"):
             cmd += ["--peak-mib", str(a["peak_mib"]), "--peak-rate", str(a.get("peak_rate_mib_s", 0)),
@@ -390,7 +393,8 @@ def main():
     samples = open(rd / "samples.csv", "w", newline="")
     sw = csv.writer(samples)
     sw.writerow(["t", "scope_current_mib", "scope_swap_mib", "file_dirty_mib", "file_writeback_mib",
-                 "some_total_us", "full_total_us", "some_avg10", "full_avg10", "alive"] +
+                 "some_total_us", "full_total_us", "some_avg10", "full_avg10", "alive",
+                 "zswap_pool_mib", "zswapped_mib"] +
                 [f"{n}_mib" for n in names])
     lru = []          # background apps, least recently used first
     launched, op_log, hint_log, relaunches = set(), [], [], []
@@ -444,7 +448,7 @@ def main():
                    int(read(SCOPE / "memory.swap.current", "0") or 0) // MiB,
                    st.get("file_dirty", 0) // MiB, st.get("file_writeback", 0) // MiB,
                    p.get("some_total", 0), p.get("full_total", 0), p.get("some_avg10", 0), p.get("full_avg10", 0),
-                   len(alive)]
+                   len(alive), st.get("zswap", 0) // MiB, st.get("zswapped", 0) // MiB]
             row += [int(read(app_cg(n) / "memory.current", "0") or 0) // MiB if n in alive else "" for n in names]
             sw.writerow(row)
             samples.flush()
@@ -560,6 +564,9 @@ def main():
                    "full": round((end_scope.get("full_total", 0) - base_scope.get("full_total", 0)) / 1000)},
         "pswpout_mib": round((end_stat.get("pswpout", 0) - base_stat.get("pswpout", 0)) * 4096 / MiB),
         "pswpin_mib": round((end_stat.get("pswpin", 0) - base_stat.get("pswpin", 0)) * 4096 / MiB),
+        "zswap": {k: end_stat.get(k, 0) - base_stat.get(k, 0) for k in ("zswpout", "zswpin", "zswpwb")},
+        "zswap_pool_peak_mib": max((int(r["zswap_pool_mib"]) for r in sample_rows), default=0),
+        "zswapped_peak_mib": max((int(r["zswapped_mib"]) for r in sample_rows), default=0),
         "swap_peak_mib": swap_peak,
         "touch_ms": {"n": len(touch_all), "mean": round(sum(touch_all) / len(touch_all)) if touch_all else None,
                      "max": max(touch_all) if touch_all else None},

@@ -41,7 +41,7 @@ double boottime() {
 struct Args {
     std::string name = "app", log, dataDir;
     double anonMiB = 0, cleanMiB = 0, dirtyMiB = 0, dirtyRate = 0;
-    double peakMiB = 0, peakRate = 0, hold = 0, peakDeadline = 30, ttl = 600, peakPageOnly = 0;
+    double peakMiB = 0, peakRate = 0, hold = 0, peakDeadline = 30, ttl = 600, peakPageOnly = 0, compressRatio = 1;
     std::uint64_t seed = 1;
 };
 
@@ -63,6 +63,21 @@ struct Rng {
 void fill(unsigned char* p, std::size_t bytes, Rng& rng) {
     auto* w = reinterpret_cast<std::uint64_t*>(p);
     for (std::size_t i = 0; i < bytes / 8; ++i) w[i] = rng.next();
+}
+
+// ratio > 1: each 4 KiB page gets 1/ratio random words and a constant fill,
+// so a compressor such as lz4 shrinks it to roughly 1/ratio. The fill is never
+// all zero, so the kernel's zero-page shortcut does not apply.
+void fillCompressible(unsigned char* p, std::size_t bytes, Rng& rng, double ratio) {
+    if (ratio <= 1.0) { fill(p, bytes, rng); return; }
+    const std::size_t words = 4096 / 8;
+    const auto randomWords = std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(words) / ratio));
+    for (std::size_t page = 0; page < bytes / 4096; ++page) {
+        auto* w = reinterpret_cast<std::uint64_t*>(p + page * 4096);
+        for (std::size_t i = 0; i < randomWords; ++i) w[i] = rng.next();
+        const std::uint64_t pattern = 0x0101010101010101ULL * ((page & 0x7f) + 1);
+        for (std::size_t i = randomWords; i < words; ++i) w[i] = pattern;
+    }
 }
 
 unsigned char* mapAnon(std::size_t bytes) {
@@ -142,6 +157,7 @@ Args parse(int argc, char** argv) {
     if (kv.count("seed")) a.seed = std::stoull(kv["seed"]);
     num("anon-mib", a.anonMiB); num("clean-mib", a.cleanMiB); num("dirty-mib", a.dirtyMiB);
     num("dirty-rate", a.dirtyRate); num("peak-mib", a.peakMiB); num("peak-page-only", a.peakPageOnly);
+    num("compress-ratio", a.compressRatio);
     num("peak-rate", a.peakRate); num("hold", a.hold); num("peak-deadline", a.peakDeadline); num("ttl", a.ttl);
     if (a.ttl <= 0 || a.ttl > 3600) throw std::runtime_error("ttl must be in (0,3600]");
     if ((a.cleanMiB > 0 || a.dirtyMiB > 0) && a.dataDir.empty()) throw std::runtime_error("files need --data-dir");
@@ -187,7 +203,7 @@ int main(int argc, char** argv) {
     try {
         if (anonBytes > 0) {
             anon = mapAnon(anonBytes);
-            fill(anon, anonBytes, rng); // touched once, then left cold
+            fillCompressible(anon, anonBytes, rng, a.compressRatio); // touched once, then left cold
         }
         if (a.cleanMiB > 0) writeFile(a.dataDir + "/" + a.name + ".clean", bytesOf(a.cleanMiB), rng, true);
         if (a.dirtyMiB > 0) {
