@@ -18,6 +18,8 @@ add_executable(harmony_v1_isolated_workload examples/harmony_v1_isolated_workloa
 add_executable(harmony_v1_test_reclaim tools/harmony_v1_test_reclaim.cpp)
 enable_testing()
 add_test(NAME policy COMMAND test_policy)
+add_executable(test_linux_scope tests/test_linux_scope.cpp)
+add_test(NAME linux_scope COMMAND test_linux_scope)
 add_test(NAME harmony_v1_profile COMMAND test_harmony_v1)
 install(TARGETS memshiftd memshiftctl compare_runs harmony_v1_probe harmony_v1_isolated_workload harmony_v1_test_reclaim RUNTIME DESTINATION bin)
 find_package(Python3 COMPONENTS Interpreter QUIET)

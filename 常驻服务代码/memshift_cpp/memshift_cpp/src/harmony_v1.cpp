@@ -4008,7 +4008,7 @@ int run(const Configuration& config,const std::string& backend,bool check,bool a
             std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(alignedSleep));
         while(!stopping() && std::chrono::steady_clock::now()<deadline) {
             const auto remain=deadline-std::chrono::steady_clock::now();
-            std::this_thread::sleep_for(std::min(remain,std::chrono::duration_cast<decltype(remain)>(std::chrono::milliseconds(100))));  //lzx-note-normal
+            std::this_thread::sleep_for(std::min(remain,std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::milliseconds(100))));  //lzx-note-normal
         }
     }
     if(dailyExecutor) {

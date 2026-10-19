@@ -1,4 +1,5 @@
 #include "io.hpp"
+#include "linux_scope.hpp"
 #include "harmony_v1.hpp"
 #include <atomic>
 #include <condition_variable>
@@ -102,7 +103,7 @@ class Worker {
             if(r.before.inode!=j.features.now.inode || r.before.device!=j.features.now.device)
                 throw std::runtime_error("cgroup generation changed");
             r.before.swapRoom=ancestorSwapRoom(root_,j.app.path);
-            r.sysBefore=systemSample(options_.proc);
+            r.sysBefore=machineSample(options_,root_);
             auto block=pressureBlock(options_,*r.sysBefore,0,0);
             if(!block.empty()) { r.status="cancelled_"+block; return r; }
             // Revalidate immediately before writing; at most ONE bounded job is in flight.
@@ -134,7 +135,7 @@ class Worker {
                 else { r.status="short_write"; r.err=EIO; }
             }
             try { r.after=sampleAt(j.dir.get()); } catch(const std::exception& e) { r.message+="; after: "+std::string(e.what()); }
-            try { r.sysAfter=systemSample(options_.proc); } catch(const std::exception& e) { r.message+="; sys_after: "+std::string(e.what()); }
+            try { r.sysAfter=machineSample(options_,root_); } catch(const std::exception& e) { r.message+="; sys_after: "+std::string(e.what()); }
         } catch(const std::exception& e) { r.status="cancelled_read_error"; r.message=e.what(); }
         r.totalMs=(monotonic()-begin)*1000;
         return r;
@@ -222,6 +223,8 @@ int run(const Args& args) {
         throw std::runtime_error("daily_known_future_free_only requires --backend harmony-v1-ratio");
     if(o.dailyRecentReserve && args.backend!="harmony-v1-ratio")
         throw std::runtime_error("daily_recent_reserve requires --backend harmony-v1-ratio");
+    if(args.backend!="linux-v2" && !o.scope.empty())
+        throw std::runtime_error("scope_cgroup is supported only by the linux-v2 backend");
     if(args.backend!="linux-v2")
         return harmony_v1::run(cfg,args.backend,args.check,args.apply,args.ticks,[]{return stopping!=0;});
     if(!args.fixture && o.proc!="/proc") throw std::runtime_error("proc_root must be /proc unless --fixture");
@@ -236,7 +239,10 @@ int run(const Args& args) {
         throw std::runtime_error("baseline supports cgroup_root=/sys/fs/cgroup (mount root) only");
     if(args.apply && maybeAt(root.get(),"memory.max"))
         throw std::runtime_error("namespace/subtree root detected; this baseline applies only at host cgroup mount root");
-    const auto initial=systemSample(o.proc);
+    validateScopeTargets(o,cfg.apps);
+    if(!o.scope.empty() && !args.fixture && isOwnTarget(o,o.scope))
+        throw std::runtime_error("daemon is inside scope_cgroup");
+    const auto initial=machineSample(o,root.get());
     if(o.reserve>=initial.total)
         throw std::runtime_error("reserve_mb must be below MemTotal");
     if(o.readyFree>=initial.total) throw std::runtime_error("ready_free_mb must be below MemTotal");
@@ -256,7 +262,8 @@ int run(const Args& args) {
     if(args.check) {
         std::cout<<"mode="<<(args.apply?"apply":"observe")<<" cgroup2="<<(stfs.f_type==Cgroup2Magic)
                  <<" MemTotal_MiB="<<initial.total/MiB<<" SwapFree_MiB="<<initial.swapFree/MiB
-                 <<" PSI="<<(initial.mem.valid&&initial.io.valid)<<'\n';
+                 <<" PSI="<<(initial.mem.valid&&initial.io.valid)
+                 <<" scope="<<(o.scope.empty()?"host":o.scope)<<'\n';
         int failures=0;
         for(const auto& app:cfg.apps) {
             try {
@@ -289,7 +296,10 @@ int run(const Args& args) {
         std::cerr<<level<<" "<<app<<" "<<message<<'\n';
     };
     event("INFO","daemon",std::string("mode=")+(args.apply?"APPLY":"OBSERVE")+"; baseline EWMA, not ML/WSS; targets="+u(cfg.apps.size()));
-    event("WARN","daemon","host-wide memory policy; not a container/ancestor memory.max quota controller; foreground integration is external");
+    if(o.scope.empty())
+        event("WARN","daemon","host-wide memory policy; not a container/ancestor memory.max quota controller; foreground integration is external");
+    else
+        event("WARN","daemon","scope memory policy: machine="+o.scope+" memory.max="+u(initial.total)+"; host meminfo not used for the gap; foreground integration is external");
     if(!initial.swapTotal) event("WARN","daemon","no configured swap: anonymous cold hint disabled by available swap budget");
     std::unique_ptr<Predictor> predictor=std::make_unique<EWMAPredictor>();
     Worker worker(o,root.get());
@@ -332,7 +342,7 @@ int run(const Args& args) {
             }
         }
         System s;
-        try { s=systemSample(o.proc); }
+        try { s=machineSample(o,root.get()); }
         catch(const std::exception& e) { event("ERROR","system",e.what()); samplingFailed=true; break; }
         auto f=predictor->update(s,o.horizonSec,o.maxDeclineMBps*MiB);
         double recentIO=0,recentFull=0,recentSome=0;

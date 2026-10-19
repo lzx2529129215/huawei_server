@@ -6,6 +6,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -118,6 +119,8 @@ inline double stallPercent(Bytes a, Bytes b, double dt) {
 struct Options {
     std::string root = "/sys/fs/cgroup", proc = "/proc";
     std::string logs = "./logs", lock = "./memshiftd.lock", control = "";
+    // linux-v2 only: cgroup whose memory.max stands in for the machine (linux_scope.hpp).
+    std::string scope = "";
     bool oracleMode = false;
     bool oracleKnownFutureFreeOnly = false; // Oracle-only perfect-event experiment; default unchanged.
     bool dailyAsync = false; // Explicit non-oracle opt-in; legacy daily path stays default.

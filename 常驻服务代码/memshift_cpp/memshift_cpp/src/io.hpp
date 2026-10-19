@@ -188,6 +188,7 @@ inline Configuration parseConfig(const std::string& text) {
         else if(k=="log_dir") o.logs=v;
         else if(k=="lock_file") o.lock=v;
         else if(k=="control_file") o.control=v;
+        else if(k=="scope_cgroup") o.scope=v;
         else if(k=="oracle_mode") o.oracleMode=boolValue(v);
         else if(k=="oracle_known_future_free_only") o.oracleKnownFutureFreeOnly=boolValue(v);
         else if(k=="daily_async") o.dailyAsync=boolValue(v);
@@ -300,6 +301,7 @@ inline Configuration parseConfig(const std::string& text) {
             "wps_window_gate requires the exact WPS leaf, daily_async, reclaim and 512 MiB keep");
     check(!o.root.empty() && o.root.front()=='/' && !o.proc.empty() && o.proc.front()=='/',"root paths must be absolute");
     check(!o.logs.empty() && !o.lock.empty(),"log_dir and lock_file required");
+    check(o.scope.empty() || safeRelative(o.scope),"scope_cgroup must be a safe relative cgroup path");
     check(o.horizonSec>=0 && o.horizonSec<=60,"horizon_sec: 0..60");
     check(o.warmupSec>=0 && o.cooldownSec>=1 && o.backoffSec>=1,"invalid grace/cooldown/backoff");
     check(o.alpha>0 && o.alpha<=1 && o.anonWeight>=0 && o.anonWeight<=1,"alpha or anon_weight invalid");
