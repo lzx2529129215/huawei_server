@@ -41,7 +41,7 @@ double boottime() {
 struct Args {
     std::string name = "app", log, dataDir;
     double anonMiB = 0, cleanMiB = 0, dirtyMiB = 0, dirtyRate = 0;
-    double peakMiB = 0, peakRate = 0, hold = 0, peakDeadline = 30, ttl = 600;
+    double peakMiB = 0, peakRate = 0, hold = 0, peakDeadline = 30, ttl = 600, peakPageOnly = 0;
     std::uint64_t seed = 1;
 };
 
@@ -72,11 +72,19 @@ unsigned char* mapAnon(std::size_t bytes) {
 }
 
 // Touch at a bounded rate (MiB/s, 0 = unbounded) so a peak can ramp.
-void touchRamp(unsigned char* p, std::size_t bytes, double rate, Rng& rng) {
+// pageOnly writes one random word per page: allocation then runs at page-fault
+// speed instead of fill speed, like an app that maps and touches a big buffer.
+void touchRamp(unsigned char* p, std::size_t bytes, double rate, Rng& rng, bool pageOnly) {
     const std::size_t step = 16 * MiB;
     const double begin = boottime();
     for (std::size_t done = 0; done < bytes && !stopping; done += step) {
-        fill(p + done, std::min(step, bytes - done), rng);
+        const std::size_t n = std::min(step, bytes - done);
+        if (pageOnly) {
+            for (std::size_t off = 0; off < n; off += 4096)
+                *reinterpret_cast<std::uint64_t*>(p + done + off) = rng.next();
+        } else {
+            fill(p + done, n, rng);
+        }
         if (rate > 0) {
             const double due = begin + static_cast<double>(done + step) / MiB / rate;
             const double wait = due - boottime();
@@ -133,7 +141,7 @@ Args parse(int argc, char** argv) {
     if (kv.count("data-dir")) a.dataDir = kv["data-dir"];
     if (kv.count("seed")) a.seed = std::stoull(kv["seed"]);
     num("anon-mib", a.anonMiB); num("clean-mib", a.cleanMiB); num("dirty-mib", a.dirtyMiB);
-    num("dirty-rate", a.dirtyRate); num("peak-mib", a.peakMiB);
+    num("dirty-rate", a.dirtyRate); num("peak-mib", a.peakMiB); num("peak-page-only", a.peakPageOnly);
     num("peak-rate", a.peakRate); num("hold", a.hold); num("peak-deadline", a.peakDeadline); num("ttl", a.ttl);
     if (a.ttl <= 0 || a.ttl > 3600) throw std::runtime_error("ttl must be in (0,3600]");
     if ((a.cleanMiB > 0 || a.dirtyMiB > 0) && a.dataDir.empty()) throw std::runtime_error("files need --data-dir");
@@ -148,7 +156,7 @@ void runPeak(const Args& a, Rng& rng) {
     const double t = boottime();
     logEvent("PEAK_BEGIN mib=" + std::to_string(static_cast<long>(a.peakMiB)));
     auto* p = mapAnon(bytes);
-    touchRamp(p, bytes, a.peakRate, rng);
+    touchRamp(p, bytes, a.peakRate, rng, a.peakPageOnly > 0);
     const double ms = (boottime() - t) * 1000;
     char buf[96];
     std::snprintf(buf, sizeof(buf), "PEAK_DONE ms=%.0f timeout=%d", ms, ms > a.peakDeadline * 1000 ? 1 : 0);

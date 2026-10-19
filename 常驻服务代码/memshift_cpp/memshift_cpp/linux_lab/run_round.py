@@ -331,6 +331,7 @@ def main():
                "--seed", str(a.get("seed", zlib.crc32(a["name"].encode()) % 100000 + gen))]
         if a.get("peak_mib"):
             cmd += ["--peak-mib", str(a["peak_mib"]), "--peak-rate", str(a.get("peak_rate_mib_s", 0)),
+                    "--peak-page-only", str(a.get("peak_page_only", 0)),
                     "--hold", str(a.get("hold_s", 0)), "--peak-deadline", str(a.get("peak_deadline_s", 30))]
         # A killed unit stays failed until reset; clear it so the name can be reused.
         sh(["systemctl", "--user", "reset-failed", unit(a["name"])], check=False)
