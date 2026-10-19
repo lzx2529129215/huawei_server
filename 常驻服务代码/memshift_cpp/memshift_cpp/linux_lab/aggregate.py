@@ -30,6 +30,7 @@ def row(s):
     ev = s["events"]
     return {
         "group": s["mode"] + s.get("tag", ""), "round": s["round_id"],
+        "events_total": s.get("events_total", s["kills"]["total"]), "popups": s.get("popups", 0),
         "kills_total": s["kills"]["total"], "kills_kernel": s["kills"]["kernel_oom"],
         "kills_policy": s["kills"]["policy"], "relaunches": s["relaunches"], "peak_fail": s["peak_fail"],
         "psi_some_ms": s["psi_ms"]["some"], "psi_full_ms": s["psi_ms"]["full"],
@@ -83,7 +84,7 @@ def main():
         if r["group"] not in groups:
             groups.append(r["group"])
     base = a.baseline or groups[0]
-    cols = ["group", "round", "kills_total", "kills_kernel", "kills_policy", "relaunches", "peak_fail",
+    cols = ["group", "round", "events_total", "popups", "kills_total", "kills_kernel", "kills_policy", "relaunches", "peak_fail",
             "psi_some_ms", "psi_full_ms", "peak_ms_max", "pswpout_mib", "pswpin_mib", "touch_ms_mean",
             "reclaimed_mib", "reclaim_write_ms", "would_reclaim_mib", "drop_caches_in_peak", "events"]
     with open(out / f"{a.label}_rounds.csv", "w", newline="") as f:
@@ -96,18 +97,22 @@ def main():
     for r in rows:
         md.append("| " + " | ".join(str(r[c]) for c in cols) + " |")
     md += ["", "### Mean ± sd per group", "",
-           "| group | rounds | kills total | kernel | policy | relaunches | PSI some ms | peak ms max | swap-out MiB | touch ms | reclaimed MiB | kills vs baseline |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+           "| group | rounds | events total | popups | kills total | kernel | policy | relaunches | PSI some ms | peak ms max | swap-out MiB | touch ms | reclaimed MiB | events vs baseline | kills vs baseline |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     base_kills = mean([r["kills_total"] for r in rows if r["group"] == base])
+    base_events = mean([r["events_total"] for r in rows if r["group"] == base])
     for g in groups:
         rs = [r for r in rows if r["group"] == g]
         k = mean([r["kills_total"] for r in rs])
+        ev = mean([r["events_total"] for r in rs])
         change = "" if g == base or not base_kills else f"{(base_kills - k) / base_kills * 100:+.1f}% fewer"
-        md.append(f"| {g} | {len(rs)} | {k} ± {sd([r['kills_total'] for r in rs])} | "
+        echange = "" if g == base or not base_events else f"{(base_events - ev) / base_events * 100:+.1f}% fewer"
+        md.append(f"| {g} | {len(rs)} | {ev} ± {sd([r['events_total'] for r in rs])} | "
+                  f"{mean([r['popups'] for r in rs])} | {k} ± {sd([r['kills_total'] for r in rs])} | "
                   f"{mean([r['kills_kernel'] for r in rs])} | {mean([r['kills_policy'] for r in rs])} | "
                   f"{mean([r['relaunches'] for r in rs])} | {mean([r['psi_some_ms'] for r in rs])} | "
                   f"{mean([r['peak_ms_max'] for r in rs])} | {mean([r['pswpout_mib'] for r in rs])} | "
-                  f"{mean([r['touch_ms_mean'] for r in rs])} | {mean([r['reclaimed_mib'] for r in rs])} | {change} |")
+                  f"{mean([r['touch_ms_mean'] for r in rs])} | {mean([r['reclaimed_mib'] for r in rs])} | {echange} | {change} |")
     by_group = {g: [d for d, r in zip(dirs, rows) if r["group"] == g] for g in groups}
     for g in groups:
         if g == base:

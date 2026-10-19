@@ -14,6 +14,11 @@ Timeline operations (scenario "timeline"):
   return  the user comes back to the listed background apps: SIGUSR1 if alive
           (touch all daily memory; swapped pages fault back), relaunch if killed
 
+Low-memory popups: Linux shows none, so a popup is recorded (not drawn) when
+the slice's available memory (free + clean page cache + half of reclaimable
+slab, as in linux_scope.hpp) drops below low_mib; it re-arms only after staying
+at or above rearm_mib for rearm_s.
+
 Kills: kernel OOM kills come from the kernel log (oom-kill lines whose
 task_memcg is an app unit). The optional policy killer is lmkd-like: when the
 slice's memory stall within a sliding window exceeds a threshold it SIGKILLs the
@@ -179,6 +184,44 @@ class PolicyKiller:
         return victim
 
 
+def scope_available():
+    """Same formula as memshiftd's scope mode (src/linux_scope.hpp)."""
+    try:
+        limit = int(read(SCOPE / "memory.max", "0").strip())
+        current = int(read(SCOPE / "memory.current", "0").strip())
+    except ValueError:
+        return None
+    st = kv(read(SCOPE / "memory.stat"))
+    clean = max(0, st.get("file", 0) - st.get("shmem", 0) - st.get("file_dirty", 0) - st.get("file_writeback", 0))
+    return min(limit, max(0, limit - current) + clean + st.get("slab_reclaimable", 0) // 2)
+
+
+class PopupMonitor:
+    """Low-memory popup stand-in: one popup per low-memory episode."""
+
+    def __init__(self, cfg):
+        self.low = cfg.get("low_mib", 50) * MiB
+        self.rearm = cfg.get("rearm_mib", 150) * MiB
+        self.rearm_s = cfg.get("rearm_s", 3.0)
+        self.armed, self.above_since, self.popups = True, None, []
+
+    def poll(self, now, foreground):
+        avail = scope_available()
+        if avail is None:
+            return
+        if self.armed:
+            if avail < self.low:
+                self.armed, self.above_since = False, None
+                self.popups.append({"t": now, "available_mib": round(avail / MiB, 1), "foreground": foreground})
+        elif avail >= self.rearm:
+            if self.above_since is None:
+                self.above_since = now
+            elif now - self.above_since >= self.rearm_s:
+                self.armed = True
+        else:
+            self.above_since = None
+
+
 def parse_app_logs(path):
     events = []
     for line in read(path).splitlines():
@@ -246,6 +289,7 @@ def main():
     ap.add_argument("--error", type=float, default=0.0, help="oracle size error, e.g. 0.2 or -0.2")
     ap.add_argument("--policy-kill", default=None, help="JSON overriding scenario policy_kill ('null' disables)")
     ap.add_argument("--set", action="append", default=[], help="memshiftd key=value override")
+    ap.add_argument("--popup", default=None, help="JSON overriding scenario popup ('null' disables)")
     ap.add_argument("--allow-contract-fail", action="store_true")
     args = ap.parse_args()
 
@@ -256,6 +300,9 @@ def main():
     policy = sc.get("policy_kill")
     if args.policy_kill is not None:
         policy = json.loads(args.policy_kill)
+    popup_cfg = sc.get("popup", {"low_mib": 50, "rearm_mib": 150, "rearm_s": 3.0})
+    if args.popup is not None:
+        popup_cfg = json.loads(args.popup)
     checks = contract_checks(sc)
     if not all(v for k, v in checks.items() if k.endswith(("_M", "_1_2M"))) and not args.allow_contract_fail:
         sys.exit(f"contract checks failed: {checks}")
@@ -338,6 +385,8 @@ def main():
         return sh(cmd, check=False).returncode
 
     killer = PolicyKiller(policy) if policy else None
+    popup = PopupMonitor(popup_cfg) if popup_cfg else None
+    foreground = None
     samples = open(rd / "samples.csv", "w", newline="")
     sw = csv.writer(samples)
     sw.writerow(["t", "scope_current_mib", "scope_swap_mib", "file_dirty_mib", "file_writeback_mib",
@@ -363,6 +412,7 @@ def main():
                 hint_log.append({**obj, "sent_s": round(now, 2), "rc": r.returncode})
                 continue
             e = obj
+            foreground = e["apps"][-1]
             if e["op"] == "launch":
                 for n in e["apps"]:
                     launch(apps[n], 0)
@@ -384,6 +434,8 @@ def main():
             op_log.append({"t_s": round(now, 2), **e})
         if killer:
             killer.poll(boottime(), lru, alive_apps(launched))
+        if popup:
+            popup.poll(boottime(), foreground)
         if now >= next_sample:
             alive = alive_apps(launched)
             st = kv(read(SCOPE / "memory.stat"))
@@ -420,6 +472,9 @@ def main():
     for k in policy_kills:
         k["t_s"] = round(k.pop("t") - t0, 2)
     drops_s = [round(d - t0_unix, 1) for d in drops]
+    popups = popup.popups if popup else []
+    for pp in popups:
+        pp["t_s"] = round(pp.pop("t") - t0, 2)
 
     # Per-app outcome and compare_runs rows (one row per app per round).
     app_events = {n: parse_app_logs(rd / "apps" / f"{n}.log") for n in names}
@@ -430,6 +485,7 @@ def main():
     for idx, n in enumerate(names, 1):
         evs = app_events[n]
         kk = sum(1 for k in kkills if k["app"] == n)
+        pops = sum(1 for pp in popups if pp["foreground"] == n)
         pk = sum(1 for k in policy_kills if k["app"] == n)
         ready = [float(e["ms"]) for e in evs if e["event"] == "DAILY_READY"]
         peaks = [e for e in evs if e["event"] == "PEAK_DONE"]
@@ -441,13 +497,13 @@ def main():
             fail = 0 if ready else 1
             lat = ready[0] if ready else None
         touches = [float(e["ms"]) for e in evs if e["event"] == "TOUCH_DONE"]
-        apps_out.append({"app": n, "role": apps[n]["role"], "kernel_oom_kills": kk, "policy_kills": pk,
+        apps_out.append({"app": n, "role": apps[n]["role"], "kernel_oom_kills": kk, "policy_kills": pk, "popups": pops,
                          "peak_fail": fail if apps[n]["role"] == "peak" else 0, "peak_ms": lat if apps[n]["role"] == "peak" else None,
                          "touch_ms": touches, "relaunches": sum(1 for r in relaunches if r["app"] == n)})
         lat_s = "" if (fail or lat is None) else f"{lat:.0f}"
         f = 1 if (fail or lat is None) else 0
-        rows_kernel.append([args.round_id, idx, n, f, 0, kk, lat_s])
-        rows_total.append([args.round_id, idx, n, f, 0, kk + pk, lat_s])
+        rows_kernel.append([args.round_id, idx, n, f, pops, kk, lat_s])
+        rows_total.append([args.round_id, idx, n, f, pops, kk + pk, lat_s])
     for fname, rows in (("compare_kernel.csv", rows_kernel), ("compare_total.csv", rows_total)):
         with open(rd / fname, "w", newline="") as fh:
             w = csv.writer(fh)
@@ -482,6 +538,7 @@ def main():
             "t": e["t"], "apps": e["apps"],
             "kernel_kills": sum(1 for k in kkills if e["t"] - 1 <= k["t_s"] <= win_end),
             "policy_kills": sum(1 for k in policy_kills if e["t"] - 1 <= k["t_s"] <= win_end),
+            "popups": sum(1 for pp in popups if e["t"] - 1 <= pp["t_s"] <= win_end),
             "stall_some_ms": some, "stall_full_ms": full,
             "peak_ms_max": max(lats) if lats else None,
             "reclaimed_before_mib": round(-sum(float(r["current_change"] or 0) for r in pre) / MiB, 1),
@@ -494,6 +551,8 @@ def main():
         "lead_s": args.lead, "error": args.error, "policy_kill": policy, "duration_s": duration,
         "contract_checks": checks,
         "kills": {"kernel_oom": len(kkills), "policy": len(policy_kills), "total": len(kkills) + len(policy_kills)},
+        "popups": len(popups), "popup_cfg": popup_cfg,
+        "events_total": len(kkills) + len(policy_kills) + len(popups) + sum(a["peak_fail"] for a in apps_out),
         "relaunches": len(relaunches),
         "peak_fail": sum(a["peak_fail"] for a in apps_out),
         "scope_events_delta": {k: end_scope.get(k, 0) - base_scope.get(k, 0) for k in ("oom", "oom_kill", "max")},
@@ -507,13 +566,14 @@ def main():
         "memshiftd_reclaim": reclaim_summary(rows),
         "events": events_out,
         "hints": hint_log, "ops": op_log, "relaunch_log": relaunches,
-        "kernel_kills": kkills, "policy_kills": policy_kills,
+        "kernel_kills": kkills, "policy_kills": policy_kills, "popup_log": popups,
         "wsl_drop_caches_s": drops_s, "apps": apps_out,
     }
     (rd / "summary.json").write_text(json.dumps(summary, indent=1))
-    brief = {k: summary[k] for k in ("scenario", "mode", "round_id", "tag", "kills", "relaunches", "peak_fail",
+    brief = {k: summary[k] for k in ("scenario", "mode", "round_id", "tag", "kills", "popups", "events_total",
+                                     "relaunches", "peak_fail",
                                      "psi_ms", "pswpout_mib", "touch_ms")}
-    brief["events"] = [{k: e[k] for k in ("t", "policy_kills", "kernel_kills", "stall_some_ms", "peak_ms_max",
+    brief["events"] = [{k: e[k] for k in ("t", "policy_kills", "kernel_kills", "popups", "stall_some_ms", "peak_ms_max",
                                           "reclaimed_before_mib", "drop_caches_in_window")} for e in events_out]
     brief["reclaim_ok_mib"] = summary["memshiftd_reclaim"]["submitted_mib"]
     print(json.dumps(brief))
