@@ -117,8 +117,11 @@ def main():
     for g in groups:
         if g == base:
             continue
+        # Pair only baseline rounds whose round id also exists in this group.
+        ids = {d.name.rsplit("_", 1)[-1] for d in by_group[g]}
+        base_dirs = [d for d in by_group[base] if d.name.rsplit("_", 1)[-1] in ids]
         for name in ("compare_total.csv", "compare_kernel.csv"):
-            text = compare(by_group[base], by_group[g], name, out / f"{a.label}_{g}")
+            text = compare(base_dirs, by_group[g], name, out / f"{a.label}_{g}")
             md += ["", f"### compare_runs: {base} vs {g} ({name})", "", "```", text, "```"]
     (out / f"{a.label}.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))
