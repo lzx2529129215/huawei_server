@@ -1,0 +1,629 @@
+{
+ "name": "wl16",
+ "note": "20 whitelisted apps (estimated profiles), Harmony scene-2 style concurrent-launch cases",
+ "generator_args": {
+  "name": "wl16",
+  "memory_max": 16384,
+  "swap_max": 25600,
+  "zswap_max": 4096,
+  "compress_ratio": 3.0,
+  "scale": 1.0,
+  "calibration": "/home/boyi/HNUST/huawei_server/results/linux_oom_lab_wl16_20261019/calibration_apps.json",
+  "cases": 4,
+  "group_size": 6,
+  "target_ratio": 1.3,
+  "click_gap": 5.5,
+  "close_after": 5.0,
+  "first_case": 60,
+  "case_gap": 110,
+  "return_offset": 47,
+  "tail": 60,
+  "medium_ms": 200,
+  "critical_ms": 700,
+  "out": "scenarios/wl16.json"
+ },
+ "scope": {
+  "memory_max_mib": 16384,
+  "swap_max_mib": 25600,
+  "zswap_max_mib": 4096
+ },
+ "duration_s": 450,
+ "policy_kill": {
+  "window_s": 1.0,
+  "cooldown_s": 1.0,
+  "levels": [
+   {
+    "some_ms": 200,
+    "min_adj": 800
+   },
+   {
+    "full_ms": 700,
+    "min_adj": 0
+   }
+  ]
+ },
+ "memshiftd": {
+  "reserve_mb": 410,
+  "ready_free_mb": 102,
+  "startup_grace_sec": 5,
+  "io_some_limit_pct": 50,
+  "max_boost_mb": 16384,
+  "batch_mb": 256,
+  "max_per_minute_mb": 16384,
+  "app_per_minute_mb": 4096,
+  "alpha": 1.0,
+  "anon_weight": 1.0,
+  "keep_ratio": 0.2,
+  "episode_fraction": 0.5,
+  "cooldown_sec": 1,
+  "boost_cap_fraction": 1.0
+ },
+ "apps": [
+  {
+   "name": "hw_music",
+   "display": "华为音乐",
+   "kind": "light",
+   "role": "resident",
+   "anon_mib": 180,
+   "clean_mib": 40,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 200,
+   "cal_daily_mib": 222,
+   "cal_peak_mib": 223
+  },
+  {
+   "name": "calendar",
+   "display": "日历",
+   "kind": "light",
+   "role": "resident",
+   "anon_mib": 120,
+   "clean_mib": 30,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 900,
+   "cal_daily_mib": 151,
+   "cal_peak_mib": 152
+  },
+  {
+   "name": "notes",
+   "display": "备忘录",
+   "kind": "light",
+   "role": "resident",
+   "anon_mib": 120,
+   "clean_mib": 30,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 900,
+   "cal_daily_mib": 151,
+   "cal_peak_mib": 152
+  },
+  {
+   "name": "wechat",
+   "display": "微信",
+   "kind": "chromium",
+   "role": "resident",
+   "anon_mib": 600,
+   "clean_mib": 150,
+   "dirty_mib": 100,
+   "dirty_rate_mib_s": 0.5,
+   "compress_ratio": 3.0,
+   "oom_adj": 900,
+   "cal_daily_mib": 860,
+   "cal_peak_mib": 860
+  },
+  {
+   "name": "dingtalk",
+   "display": "钉钉",
+   "kind": "chromium",
+   "role": "resident",
+   "anon_mib": 600,
+   "clean_mib": 120,
+   "dirty_mib": 80,
+   "dirty_rate_mib_s": 0.4,
+   "compress_ratio": 3.0,
+   "oom_adj": 900,
+   "cal_daily_mib": 808,
+   "cal_peak_mib": 808
+  },
+  {
+   "name": "feishu",
+   "display": "飞书",
+   "kind": "chromium",
+   "role": "resident",
+   "anon_mib": 700,
+   "clean_mib": 150,
+   "dirty_mib": 80,
+   "dirty_rate_mib_s": 0.4,
+   "compress_ratio": 3.0,
+   "oom_adj": 900,
+   "cal_daily_mib": 940,
+   "cal_peak_mib": 940
+  },
+  {
+   "name": "hw_browser",
+   "display": "华为浏览器",
+   "kind": "chromium",
+   "role": "resident",
+   "anon_mib": 800,
+   "clean_mib": 200,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 900,
+   "cal_daily_mib": 1008,
+   "cal_peak_mib": 1009
+  },
+  {
+   "name": "xhs",
+   "display": "小红书",
+   "kind": "chromium",
+   "role": "resident",
+   "anon_mib": 600,
+   "clean_mib": 200,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 900,
+   "cal_daily_mib": 807,
+   "cal_peak_mib": 808
+  },
+  {
+   "name": "jianying",
+   "display": "剪映",
+   "kind": "heavy",
+   "role": "launch",
+   "anon_mib": 500,
+   "clean_mib": 300,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 4300,
+   "peak_page_only": 1,
+   "peak_after_s": 8,
+   "hold_s": 15,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 810,
+   "cal_peak_mib": 5118
+  },
+  {
+   "name": "zwcad",
+   "display": "中望CAD",
+   "kind": "heavy",
+   "role": "launch",
+   "anon_mib": 500,
+   "clean_mib": 200,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 4300,
+   "peak_page_only": 1,
+   "peak_after_s": 4,
+   "hold_s": 15,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 707,
+   "cal_peak_mib": 5015
+  },
+  {
+   "name": "wukong",
+   "display": "悟空图像",
+   "kind": "heavy",
+   "role": "launch",
+   "anon_mib": 400,
+   "clean_mib": 200,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 4200,
+   "peak_page_only": 1,
+   "peak_after_s": 6,
+   "hold_s": 12,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 607,
+   "cal_peak_mib": 4815
+  },
+  {
+   "name": "wps",
+   "display": "WPS",
+   "kind": "medium",
+   "role": "launch",
+   "anon_mib": 350,
+   "clean_mib": 150,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 2300,
+   "peak_page_only": 1,
+   "peak_after_s": 2,
+   "hold_s": 10,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 505,
+   "cal_peak_mib": 2810
+  },
+  {
+   "name": "edrawmax",
+   "display": "亿图图示",
+   "kind": "medium",
+   "role": "launch",
+   "anon_mib": 300,
+   "clean_mib": 100,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 2100,
+   "peak_page_only": 1,
+   "peak_after_s": 3,
+   "hold_s": 10,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 404,
+   "cal_peak_mib": 2508
+  },
+  {
+   "name": "mindmaster",
+   "display": "mindmaster",
+   "kind": "medium",
+   "role": "launch",
+   "anon_mib": 300,
+   "clean_mib": 100,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 1900,
+   "peak_page_only": 1,
+   "peak_after_s": 3,
+   "hold_s": 8,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 404,
+   "cal_peak_mib": 2308
+  },
+  {
+   "name": "hw_video",
+   "display": "华为视频",
+   "kind": "medium",
+   "role": "launch",
+   "anon_mib": 300,
+   "clean_mib": 300,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 1800,
+   "peak_page_only": 1,
+   "peak_after_s": 1,
+   "hold_s": 20,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 609,
+   "cal_peak_mib": 2413
+  },
+  {
+   "name": "bilibili",
+   "display": "哔哩哔哩",
+   "kind": "chromium",
+   "role": "launch",
+   "anon_mib": 600,
+   "clean_mib": 200,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 1800,
+   "peak_page_only": 1,
+   "peak_after_s": 2,
+   "hold_s": 20,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 807,
+   "cal_peak_mib": 2610
+  },
+  {
+   "name": "douyin",
+   "display": "抖音",
+   "kind": "chromium",
+   "role": "launch",
+   "anon_mib": 700,
+   "clean_mib": 250,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 1700,
+   "peak_page_only": 1,
+   "peak_after_s": 1,
+   "hold_s": 15,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 959,
+   "cal_peak_mib": 2662
+  },
+  {
+   "name": "haitai_browser",
+   "display": "海泰浏览器",
+   "kind": "chromium",
+   "role": "launch",
+   "anon_mib": 700,
+   "clean_mib": 150,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 1500,
+   "peak_page_only": 1,
+   "peak_after_s": 2,
+   "hold_s": 10,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 856,
+   "cal_peak_mib": 2359
+  },
+  {
+   "name": "coremail",
+   "display": "coremail",
+   "kind": "chromium",
+   "role": "launch",
+   "anon_mib": 400,
+   "clean_mib": 150,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 1200,
+   "peak_page_only": 1,
+   "peak_after_s": 3,
+   "hold_s": 6,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 555,
+   "cal_peak_mib": 1758
+  },
+  {
+   "name": "hw_email",
+   "display": "华为邮箱",
+   "kind": "medium",
+   "role": "launch",
+   "anon_mib": 300,
+   "clean_mib": 150,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0.0,
+   "compress_ratio": 3.0,
+   "oom_adj": 700,
+   "peak_mib": 1100,
+   "peak_page_only": 1,
+   "peak_after_s": 3,
+   "hold_s": 6,
+   "peak_deadline_s": 60,
+   "exit_after_s": 5.0,
+   "fg_adj": 100,
+   "cal_daily_mib": 455,
+   "cal_peak_mib": 1557
+  }
+ ],
+ "cases": [
+  {
+   "id": "case1",
+   "apps": [
+    "hw_email",
+    "mindmaster",
+    "edrawmax",
+    "wukong",
+    "zwcad",
+    "jianying"
+   ]
+  },
+  {
+   "id": "case2",
+   "apps": [
+    "bilibili",
+    "douyin",
+    "wps",
+    "zwcad",
+    "jianying",
+    "hw_video"
+   ]
+  },
+  {
+   "id": "case3",
+   "apps": [
+    "haitai_browser",
+    "wukong",
+    "zwcad",
+    "jianying",
+    "coremail",
+    "mindmaster"
+   ]
+  },
+  {
+   "id": "case4",
+   "apps": [
+    "wukong",
+    "zwcad",
+    "jianying",
+    "hw_email",
+    "haitai_browser",
+    "hw_video"
+   ]
+  }
+ ],
+ "timeline": [
+  {
+   "t": 0,
+   "op": "launch",
+   "apps": [
+    "hw_music"
+   ]
+  },
+  {
+   "t": 3,
+   "op": "launch",
+   "apps": [
+    "calendar"
+   ]
+  },
+  {
+   "t": 6,
+   "op": "launch",
+   "apps": [
+    "notes"
+   ]
+  },
+  {
+   "t": 9,
+   "op": "launch",
+   "apps": [
+    "wechat"
+   ]
+  },
+  {
+   "t": 12,
+   "op": "launch",
+   "apps": [
+    "dingtalk"
+   ]
+  },
+  {
+   "t": 15,
+   "op": "launch",
+   "apps": [
+    "feishu"
+   ]
+  },
+  {
+   "t": 18,
+   "op": "launch",
+   "apps": [
+    "hw_browser"
+   ]
+  },
+  {
+   "t": 21,
+   "op": "launch",
+   "apps": [
+    "xhs"
+   ]
+  },
+  {
+   "t": 60,
+   "op": "launch_group",
+   "case": "case1",
+   "apps": [
+    "hw_email",
+    "mindmaster",
+    "edrawmax",
+    "wukong",
+    "zwcad",
+    "jianying"
+   ],
+   "click_gap_s": 5.5
+  },
+  {
+   "t": 107,
+   "op": "return",
+   "apps": [
+    "hw_music",
+    "calendar",
+    "notes",
+    "wechat",
+    "dingtalk",
+    "feishu",
+    "hw_browser",
+    "xhs"
+   ]
+  },
+  {
+   "t": 170,
+   "op": "launch_group",
+   "case": "case2",
+   "apps": [
+    "bilibili",
+    "douyin",
+    "wps",
+    "zwcad",
+    "jianying",
+    "hw_video"
+   ],
+   "click_gap_s": 5.5
+  },
+  {
+   "t": 217,
+   "op": "return",
+   "apps": [
+    "hw_music",
+    "calendar",
+    "notes",
+    "wechat",
+    "dingtalk",
+    "feishu",
+    "hw_browser",
+    "xhs"
+   ]
+  },
+  {
+   "t": 280,
+   "op": "launch_group",
+   "case": "case3",
+   "apps": [
+    "haitai_browser",
+    "wukong",
+    "zwcad",
+    "jianying",
+    "coremail",
+    "mindmaster"
+   ],
+   "click_gap_s": 5.5
+  },
+  {
+   "t": 327,
+   "op": "return",
+   "apps": [
+    "hw_music",
+    "calendar",
+    "notes",
+    "wechat",
+    "dingtalk",
+    "feishu",
+    "hw_browser",
+    "xhs"
+   ]
+  },
+  {
+   "t": 390,
+   "op": "launch_group",
+   "case": "case4",
+   "apps": [
+    "wukong",
+    "zwcad",
+    "jianying",
+    "hw_email",
+    "haitai_browser",
+    "hw_video"
+   ],
+   "click_gap_s": 5.5
+  }
+ ]
+}
