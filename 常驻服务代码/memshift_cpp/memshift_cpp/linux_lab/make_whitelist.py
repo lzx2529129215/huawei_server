@@ -138,7 +138,7 @@ def main():
     ap.add_argument("--name", default="wl16")
     ap.add_argument("--memory-max", type=int, default=16384)
     ap.add_argument("--swap-max", type=int, default=25600)
-    ap.add_argument("--zswap-max", type=int, default=4096)
+    ap.add_argument("--zswap-max", type=int, default=2048)
     ap.add_argument("--compress-ratio", type=float, default=3.0)
     ap.add_argument("--scale", type=float, default=1.0, help="multiply every app size")
     ap.add_argument("--calibration", default=None, help="calibrate_apps.py output")

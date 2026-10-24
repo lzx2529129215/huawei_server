@@ -11,9 +11,10 @@ OUT=${1:?usage: run_wl16.sh OUTPUT_DIR}
     --out "$OUT/calibration_apps.json"
 
 # wl16 = calibration set w3: 6 apps clicked 5.5 s apart per case, 4 cases per round.
-python3 make_whitelist.py --name wl16 --click-gap 5.5 --calibration "$OUT/calibration_apps.json" \
-    --out scenarios/wl16.json
+# zswap pool capped at 2 GiB (was 4 GiB until 2026-10-20).
+python3 make_whitelist.py --name wl16 --click-gap 5.5 --zswap-max 2048 \
+    --calibration "$OUT/calibration_apps.json" --out scenarios/wl16.json
 
-# Baseline gives ~12 events per round, so 9 rounds reach the 100-event threshold.
-python3 run_series.py --scenario scenarios/wl16.json --out "$OUT/formal" --label formal --rounds 9 \
+# Baseline gives ~11 events per round, so 10 rounds reach the 100-event threshold.
+python3 run_series.py --scenario scenarios/wl16.json --out "$OUT/formal" --label formal --rounds 10 \
     --variant observe::30 --variant apply::30

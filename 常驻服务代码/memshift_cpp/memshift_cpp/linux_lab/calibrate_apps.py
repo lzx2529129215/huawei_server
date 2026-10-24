@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_round as rr  # noqa: E402
 
 
-def calibrate(a, data, logdir, timeout=90.0):
+def calibrate(a, data, logdir, timeout=90.0, hold=None):
     log = logdir / f"{a['name']}.log"
     cmd = ["systemd-run", "--user", "-q", f"--unit={rr.unit(a['name'])}", "--slice=memlab",
            str(rr.BUILD / "memlab_app"), "--name", a["name"], "--log", str(log), "--data-dir", str(data),
@@ -26,9 +26,12 @@ def calibrate(a, data, logdir, timeout=90.0):
            "--dirty-mib", str(a.get("dirty_mib", 0)), "--dirty-rate", str(a.get("dirty_rate_mib_s", 0)),
            "--compress-ratio", str(a.get("compress_ratio", 1)), "--ttl", str(int(timeout) + 30),
            "--seed", str(zlib.crc32(a["name"].encode()) % 100000)]
+    for key, flag in (("locked_mib", "--locked-mib"), ("peak_compress_ratio", "--peak-compress-ratio")):
+        if a.get(key):
+            cmd += [flag, str(a[key])]
     if a.get("peak_mib"):
         cmd += ["--peak-mib", str(a["peak_mib"]), "--peak-page-only", str(a.get("peak_page_only", 0)),
-                "--hold", str(a.get("hold_s", 0)), "--peak-after", str(a.get("peak_after_s", 0)),
+                "--hold", str(a.get("hold_s", 0) if hold is None else hold), "--peak-after", str(a.get("peak_after_s", 2)),
                 "--exit-after-peak", "1"]
     rr.sh(["systemctl", "--user", "reset-failed", rr.unit(a["name"])], check=False)
     rr.sh(cmd)
@@ -42,7 +45,8 @@ def calibrate(a, data, logdir, timeout=90.0):
         text = rr.read(log)
         if ready_at is None and "DAILY_READY" in text:
             ready_at = time.monotonic()
-        # Sample the daily footprint before any task starts (peak_after can be 1 s).
+        # Sample the daily footprint before any task starts (peak_after can be 1 s; apps
+        # without one wait 2 s, so the sample never includes the peak).
         if ready_at is not None and not daily and time.monotonic() - ready_at >= 0.3:
             daily = cur
         if "STARTUP_READY" in text and daily:
@@ -55,15 +59,14 @@ def calibrate(a, data, logdir, timeout=90.0):
     ev = rr.parse_app_logs(log)
     startup = next((float(e["ms"]) for e in ev if e["event"] == "STARTUP_READY"), None)
     return {"daily_mib": round(daily / rr.MiB), "peak_mib": round(peak / rr.MiB), "startup_ms": startup,
-            "nominal_daily_mib": a.get("anon_mib", 0) + a.get("clean_mib", 0) + a.get("dirty_mib", 0) + 4,
-            "nominal_peak_mib": a.get("anon_mib", 0) + a.get("clean_mib", 0) + a.get("dirty_mib", 0) + 4 +
-                                a.get("peak_mib", 0)}
+            "nominal_daily_mib": rr.daily_mib(a), "nominal_peak_mib": rr.daily_mib(a) + a.get("peak_mib", 0)}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scenario", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--hold", type=float, default=None, help="override every peak's hold (seconds)")
     args = ap.parse_args()
     sc = json.loads(Path(args.scenario).read_text())
     work = Path(args.out).with_suffix(".work")
@@ -79,7 +82,7 @@ def main():
     out = {}
     try:
         for a in sc["apps"]:
-            out[a["name"]] = calibrate(a, work / "data", work)
+            out[a["name"]] = calibrate(a, work / "data", work, hold=args.hold)
             print(a["name"], out[a["name"]], flush=True)
             for f in (work / "data").iterdir():
                 f.unlink()

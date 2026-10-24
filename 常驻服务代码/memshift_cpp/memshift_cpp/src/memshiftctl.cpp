@@ -10,6 +10,7 @@ int main(int argc,char** argv) {
         std::optional<bool> pause;
         std::optional<std::string> protect;
         std::optional<Bytes> boost;
+        std::optional<std::string> targets;
         Bytes ttl=30;
         for(int i=1;i<argc;++i) {
             std::string k=argv[i];
@@ -21,9 +22,11 @@ int main(int argc,char** argv) {
             else if(k=="--protect") { protect=val(); changed=true; }
             else if(k=="--boost-mb") { boost=mbValue(val()); changed=true; }
             else if(k=="--ttl") ttl=uintValue(val());
+            else if(k=="--peak-targets") { targets=val(); changed=true; }
             else if(k=="--help") {
                 std::cout<<"memshiftctl --file FILE [--init] [--show] [--pause true|false]\n"
                          <<"            [--protect name1,name2|none] [--boost-mb N --ttl SECONDS]\n"
+                         <<"            [--peak-targets name:MiB,...|none]  (with --boost-mb; same expiry)\n"
                          <<"Atomic merge: unspecified fields are preserved. TTL: 1..300.\n"; return 0;
             } else throw std::runtime_error("unknown option: "+k);
         }
@@ -48,7 +51,12 @@ int main(int argc,char** argv) {
                 }
             }
         }
-        if(boost) { c.boost=*boost; c.until=*boost?add(unixSeconds(),ttl):0; }
+        if(targets && !boost) throw std::runtime_error("--peak-targets needs --boost-mb (they share one expiry)");
+        if(boost) {
+            c.boost=*boost; c.until=*boost?add(unixSeconds(),ttl):0;
+            // A new boost replaces the old targets; clearing the boost clears them too.
+            c.peakTargets=(targets && *targets!="none" && *boost)?parsePeakTargets(*targets):std::map<std::string,Bytes>{};
+        }
         const auto text=controlText(c);
         temporary=file+".tmp."+std::to_string(::getpid());
         {

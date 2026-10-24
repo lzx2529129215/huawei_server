@@ -1,0 +1,522 @@
+{
+ "name": "cgC_hotall_r10",
+ "note": "场景 C：浏览器多标签 + 办公. Aligned peaks from WSL cgroup measurements (实验设置.md v2)",
+ "scope": {
+  "memory_max_mib": 16384,
+  "swap_max_mib": 25600,
+  "zswap_max_mib": 2048
+ },
+ "duration_s": 510,
+ "peak_plan": {
+  "T": 300,
+  "hold_s": 15,
+  "release_gap_s": 15,
+  "first_ramp_s": 290.0,
+  "return_start_s": 375,
+  "release_order": [
+   "wechat",
+   "chrome",
+   "edge",
+   "wps"
+  ],
+  "return_order": [
+   "feishu",
+   "dingtalk",
+   "thunderbird",
+   "gnote",
+   "rhythmbox",
+   "calendar",
+   "evolution"
+  ]
+ },
+ "policy_kill": {
+  "window_s": 1.0,
+  "cooldown_s": 1.0,
+  "levels": [
+   {
+    "some_ms": 200,
+    "min_adj": 800
+   },
+   {
+    "full_ms": 700,
+    "min_adj": 0
+   }
+  ]
+ },
+ "popup": {
+  "low_mib": 50,
+  "rearm_mib": 150,
+  "rearm_s": 3.0
+ },
+ "memshiftd": {
+  "reclaim_interface": "high",
+  "zswap_quota": "true",
+  "wm_low_mb": 512,
+  "wm_high_mb": 1024,
+  "hint_reserve_mb": 512,
+  "hint_gap_mb": 256,
+  "floor_ratio": 0.2,
+  "assumed_compress_ratio": 3.0,
+  "pulse_mb": 64,
+  "pulse_rate_mb_s": 256,
+  "pulse_timeout_ms": 5000,
+  "interval_ms": 500,
+  "startup_grace_sec": 5,
+  "backoff_sec": 10,
+  "max_boost_mb": 16384
+ },
+ "apps": [
+  {
+   "name": "chrome",
+   "role": "peak",
+   "measured_daily_mib": 1157,
+   "measured_split_mib": [
+    398,
+    567,
+    189
+   ],
+   "anon_mib": 398,
+   "locked_mib": 189,
+   "clean_mib": 567,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 100,
+   "peak_hot_file_mib": 567,
+   "peak_hot_period": 10,
+   "peak_hot_source": "WSS S06 多标签集中恢复（丢弃 9 个后逐个唤醒）",
+   "peak_op": "S06 多标签集中恢复（丢弃 9 个后逐个唤醒）",
+   "peak_mib": 3891,
+   "ramp_s": 10.0,
+   "measured_ramp_s": 76,
+   "peak_rate_mib_s": 389.1,
+   "peak_compress_ratio": 3.0,
+   "hold_s": 30,
+   "release_k": 1,
+   "peak_deadline_s": 15.0,
+   "cal_daily_mib": 1171,
+   "cal_peak_mib": 5070
+  },
+  {
+   "name": "edge",
+   "role": "peak",
+   "measured_daily_mib": 1040,
+   "measured_split_mib": [
+    323,
+    531,
+    184
+   ],
+   "anon_mib": 323,
+   "locked_mib": 184,
+   "clean_mib": 531,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 100,
+   "peak_hot_file_mib": 531,
+   "peak_hot_period": 10,
+   "peak_hot_source": "WSS S06 多标签集中恢复（丢弃 9 个后逐个唤醒）",
+   "peak_op": "S06 多标签集中恢复（丢弃 9 个后逐个唤醒）",
+   "peak_mib": 3676,
+   "ramp_s": 10.0,
+   "measured_ramp_s": 79,
+   "peak_rate_mib_s": 367.6,
+   "peak_compress_ratio": 3.0,
+   "hold_s": 45,
+   "release_k": 2,
+   "peak_deadline_s": 15.0,
+   "cal_daily_mib": 1054,
+   "cal_peak_mib": 4738
+  },
+  {
+   "name": "feishu",
+   "role": "background",
+   "measured_daily_mib": 2292,
+   "measured_split_mib": [
+    1115,
+    798,
+    377
+   ],
+   "anon_mib": 1115,
+   "locked_mib": 377,
+   "clean_mib": 798,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 910,
+   "hot_anon_mib": 498,
+   "hot_file_mib": 798,
+   "hot_period": 120,
+   "hot_source": "WSS S07/S08 后台：发 50 MB 文件给自己，窗口隐藏 2 分钟",
+   "cal_daily_mib": 2315,
+   "cal_peak_mib": 2316
+  },
+  {
+   "name": "wechat",
+   "role": "peak",
+   "measured_daily_mib": 1056,
+   "measured_split_mib": [
+    360,
+    634,
+    59
+   ],
+   "anon_mib": 360,
+   "locked_mib": 59,
+   "clean_mib": 634,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 100,
+   "peak_hot_file_mib": 161,
+   "peak_hot_period": 10,
+   "peak_hot_source": "WSS S04 发图片到文件传输助手并看大图",
+   "peak_op": "S04 发图片到文件传输助手并看大图",
+   "peak_mib": 573,
+   "ramp_s": 10.0,
+   "measured_ramp_s": 19,
+   "peak_rate_mib_s": 57.3,
+   "peak_compress_ratio": 3.0,
+   "hold_s": 15,
+   "release_k": 0,
+   "peak_deadline_s": 15.0,
+   "cal_daily_mib": 1072,
+   "cal_peak_mib": 1646
+  },
+  {
+   "name": "dingtalk",
+   "role": "background",
+   "measured_daily_mib": 773,
+   "measured_split_mib": [
+    212,
+    514,
+    44
+   ],
+   "anon_mib": 212,
+   "locked_mib": 44,
+   "clean_mib": 514,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 920,
+   "hot_anon_mib": 17,
+   "hot_file_mib": 63,
+   "hot_period": 120,
+   "hot_source": "WSS S07 后台驻留（窗口隐藏 2 分钟）",
+   "cal_daily_mib": 785,
+   "cal_peak_mib": 786
+  },
+  {
+   "name": "wps",
+   "role": "peak",
+   "measured_daily_mib": 1098,
+   "measured_split_mib": [
+    296,
+    722,
+    77
+   ],
+   "anon_mib": 296,
+   "locked_mib": 77,
+   "clean_mib": 722,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 100,
+   "peak_hot_file_mib": 197,
+   "peak_hot_period": 10,
+   "peak_hot_source": "WSS S06 大文档导出 PDF",
+   "peak_op": "S06 大文档导出 PDF",
+   "peak_mib": 1408,
+   "ramp_s": 10.0,
+   "measured_ramp_s": 20,
+   "peak_rate_mib_s": 140.8,
+   "peak_compress_ratio": 3.0,
+   "hold_s": 60,
+   "release_k": 3,
+   "peak_deadline_s": 15.0,
+   "cal_daily_mib": 1116,
+   "cal_peak_mib": 2527
+  },
+  {
+   "name": "thunderbird",
+   "role": "background",
+   "measured_daily_mib": 1477,
+   "measured_split_mib": [
+    465,
+    930,
+    78
+   ],
+   "anon_mib": 465,
+   "locked_mib": 78,
+   "clean_mib": 930,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 930,
+   "hot_anon_mib": 386,
+   "hot_file_mib": 43,
+   "hot_period": 120,
+   "hot_source": "WSS S07 后台邮箱驻留（窗口隐藏 2 分钟）",
+   "cal_daily_mib": 1500,
+   "cal_peak_mib": 1501
+  },
+  {
+   "name": "gnote",
+   "role": "background",
+   "measured_daily_mib": 575,
+   "measured_split_mib": [
+    364,
+    173,
+    35
+   ],
+   "anon_mib": 364,
+   "locked_mib": 35,
+   "clean_mib": 173,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 960,
+   "hot_anon_mib": 3,
+   "hot_file_mib": 6,
+   "hot_period": 120,
+   "hot_source": "WSS S07 后台笔记驻留（窗口隐藏 2 分钟）",
+   "cal_daily_mib": 578,
+   "cal_peak_mib": 579
+  },
+  {
+   "name": "rhythmbox",
+   "role": "background",
+   "measured_daily_mib": 182,
+   "measured_split_mib": [
+    66,
+    113,
+    2
+   ],
+   "anon_mib": 66,
+   "locked_mib": 2,
+   "clean_mib": 113,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 200,
+   "hot_anon_mib": 58,
+   "hot_file_mib": 26,
+   "hot_period": 120,
+   "hot_source": "WSS S08 后台音频播放（窗口隐藏 2 分钟）",
+   "cal_daily_mib": 185,
+   "cal_peak_mib": 186
+  },
+  {
+   "name": "calendar",
+   "role": "background",
+   "measured_daily_mib": 643,
+   "measured_split_mib": [
+    367,
+    237,
+    36
+   ],
+   "anon_mib": 367,
+   "locked_mib": 36,
+   "clean_mib": 237,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 950,
+   "hot_anon_mib": 205,
+   "hot_file_mib": 21,
+   "hot_period": 120,
+   "hot_source": "WSS S07 后台日历驻留（窗口隐藏 2 分钟）",
+   "cal_daily_mib": 648,
+   "cal_peak_mib": 649
+  },
+  {
+   "name": "evolution",
+   "role": "background",
+   "measured_daily_mib": 192,
+   "measured_split_mib": [
+    141,
+    26,
+    21
+   ],
+   "anon_mib": 141,
+   "locked_mib": 21,
+   "clean_mib": 26,
+   "dirty_mib": 0,
+   "dirty_rate_mib_s": 0,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 940,
+   "hot_anon_mib": 6,
+   "hot_file_mib": 26,
+   "hot_period": 120,
+   "hot_source": "WSS S07 后台邮箱驻留（窗口隐藏 2 分钟）",
+   "cal_daily_mib": 190,
+   "cal_peak_mib": 191
+  }
+ ],
+ "timeline": [
+  {
+   "t": 0,
+   "op": "launch",
+   "apps": [
+    "chrome"
+   ]
+  },
+  {
+   "t": 3,
+   "op": "launch",
+   "apps": [
+    "edge"
+   ]
+  },
+  {
+   "t": 6,
+   "op": "launch",
+   "apps": [
+    "feishu"
+   ]
+  },
+  {
+   "t": 9,
+   "op": "launch",
+   "apps": [
+    "wechat"
+   ]
+  },
+  {
+   "t": 12,
+   "op": "launch",
+   "apps": [
+    "dingtalk"
+   ]
+  },
+  {
+   "t": 15,
+   "op": "launch",
+   "apps": [
+    "wps"
+   ]
+  },
+  {
+   "t": 18,
+   "op": "launch",
+   "apps": [
+    "thunderbird"
+   ]
+  },
+  {
+   "t": 21,
+   "op": "launch",
+   "apps": [
+    "gnote"
+   ]
+  },
+  {
+   "t": 24,
+   "op": "launch",
+   "apps": [
+    "rhythmbox"
+   ]
+  },
+  {
+   "t": 27,
+   "op": "launch",
+   "apps": [
+    "calendar"
+   ]
+  },
+  {
+   "t": 30,
+   "op": "launch",
+   "apps": [
+    "evolution"
+   ]
+  },
+  {
+   "t": 290.0,
+   "op": "peak",
+   "apps": [
+    "chrome"
+   ]
+  },
+  {
+   "t": 290.0,
+   "op": "peak",
+   "apps": [
+    "edge"
+   ]
+  },
+  {
+   "t": 290.0,
+   "op": "peak",
+   "apps": [
+    "wechat"
+   ]
+  },
+  {
+   "t": 290.0,
+   "op": "peak",
+   "apps": [
+    "wps"
+   ]
+  },
+  {
+   "t": 375,
+   "op": "return",
+   "apps": [
+    "feishu"
+   ]
+  },
+  {
+   "t": 390,
+   "op": "return",
+   "apps": [
+    "dingtalk"
+   ]
+  },
+  {
+   "t": 405,
+   "op": "return",
+   "apps": [
+    "thunderbird"
+   ]
+  },
+  {
+   "t": 420,
+   "op": "return",
+   "apps": [
+    "gnote"
+   ]
+  },
+  {
+   "t": 435,
+   "op": "return",
+   "apps": [
+    "rhythmbox"
+   ]
+  },
+  {
+   "t": 450,
+   "op": "return",
+   "apps": [
+    "calendar"
+   ]
+  },
+  {
+   "t": 465,
+   "op": "return",
+   "apps": [
+    "evolution"
+   ]
+  }
+ ]
+}

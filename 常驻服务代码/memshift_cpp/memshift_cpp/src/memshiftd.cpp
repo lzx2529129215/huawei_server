@@ -1,10 +1,12 @@
 #include "io.hpp"
 #include "linux_scope.hpp"
 #include "harmony_v1.hpp"
+#include "watermark.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <csignal>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -214,6 +216,422 @@ void resultRow(CSV& log,const Result& r) {
              r.sysBefore&&r.sysAfter?change(r.sysAfter->available,r.sysBefore->available):"",
              r.sysBefore&&r.sysAfter?change(r.sysAfter->free,r.sysBefore->free):"",r.message});
 }
+// ---------------- reclaim_interface=high (linux-v2 scope mode) ----------------
+// Writes text to one cgroup control file; returns 0 or errno. Retries EINTR,
+// so use it only for writes that are safe to repeat (restoring "max").
+int writeControl(int dir,const char* name,const std::string& text) {
+    FD f(::openat(dir,name,O_WRONLY|O_CLOEXEC|O_NOFOLLOW));
+    if(f.get()<0) return errno;
+    for(;;) {
+        const auto n=::write(f.get(),text.data(),text.size());
+        if(n==static_cast<ssize_t>(text.size())) return 0;
+        if(n<0 && errno==EINTR) continue;
+        return n<0?errno:EIO;
+    }
+}
+Bytes residentOf(const Sample& s) { return add(sub(s.anon,s.unevictable),s.file); }
+struct PulseRow {
+    std::string status,message;
+    Bytes requested=0,target=0,before=0,after=0,swapBefore=0,swapAfter=0;
+    double writeMs=0;
+    bool restored=true;
+    KV statBefore,statAfter;
+};
+struct PulseJob {
+    std::size_t index=0;
+    std::string name,path,reason;
+    FD dir;
+    Bytes want=0;        // net drop of memory.current asked for
+    Bytes floorBytes=0;  // anon (minus locked) + file must stay at or above this
+};
+struct PulseResult {
+    std::size_t index=0;
+    std::string name,path,reason,status,message;
+    Bytes want=0,freed=0,requested=0,currentBefore=0,currentAfter=0,swapBefore=0,swapAfter=0;
+    int err=0;
+    double totalMs=0,writeMs=0;
+    std::vector<PulseRow> pulses;
+};
+// One background thread does all memory.high writes (the zswapd stand-in), so
+// the sampler never blocks in reclaim. A job is a series of pulses on one app:
+// high = current - N, then high = max again, until the job's net drop is
+// reached, the app hits its floor, the kernel makes no progress, or the main
+// loop cancels a pulse that runs too long (by writing max itself).
+class PulseWorker {
+    Options o_;
+    Bytes page_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::optional<PulseJob> pending_;
+    std::optional<PulseResult> completed_;
+    bool stop_=false,running_=false;
+    std::atomic<bool> cancel_{false},slowCancel_{false};
+    std::atomic<double> pulseStart_{0};
+    double nextPulse_=0;   // monotonic time the next pulse may start (pulse_rate_mb_s)
+    double cancelSentFor_=0;
+    std::string pulsePath_;
+    std::thread thread_;
+    static Bytes currentOf(int dir) { return uintValue(trim(readAt(dir,"memory.current"))); }
+    static Bytes swapOf(int dir) { auto t=maybeAt(dir,"memory.swap.current"); return t?uintValue(trim(*t)):0; }
+    PulseRow pulse(PulseJob& j,Bytes n,KV stat) {
+        PulseRow p; p.requested=n; p.statBefore=std::move(stat);
+        p.before=currentOf(j.dir.get()); p.swapBefore=swapOf(j.dir.get());
+        p.target=sub(p.before,n); p.target-=p.target%page_;
+        FD f(::openat(j.dir.get(),"memory.high",O_WRONLY|O_CLOEXEC|O_NOFOLLOW));
+        if(f.get()<0) { p.status="open_error"; p.message=std::strerror(errno); return p; }
+        {
+            std::lock_guard<std::mutex> lock(mutex_); pulsePath_=j.path;
+        }
+        int restoreErr=0;
+        {
+            // Restore max no matter what (also on an exception): a low
+            // memory.high left behind throttles the app.
+            struct Guard {
+                int dir; int& err;
+                // ENOENT/ENODEV: the cgroup is gone (app exited); nothing is left low.
+                ~Guard() { err=writeControl(dir,"memory.high","max\n"); if(err==ENOENT || err==ENODEV) err=0; }
+            } guard{j.dir.get(),restoreErr};
+            const std::string text=u(p.target)+"\n";
+            const double t=monotonic();
+            pulseStart_=t;
+            // The write blocks while the kernel reclaims in this thread. Never retried.
+            const auto w=::write(f.get(),text.data(),text.size());
+            const int e=w<0?errno:0;
+            p.writeMs=(monotonic()-t)*1000;
+            pulseStart_=0;
+            if(w==static_cast<ssize_t>(text.size())) p.status="ok";
+            else if(w<0) { p.status="write_error"; p.message=std::strerror(e); }
+            else p.status="short_write";
+        }
+        if(restoreErr) { p.restored=false; p.message+="restore failed: "+std::string(std::strerror(restoreErr)); }
+        return p;
+    }
+    PulseResult execute(PulseJob j) {
+        PulseResult r; r.index=j.index; r.name=j.name; r.path=j.path; r.reason=j.reason; r.want=j.want;
+        const double begin=monotonic();
+        try {
+            auto ctl=controlNow(o_);
+            if(ctl.paused || ctl.protectedApps.count(j.name) || isOwnTarget(o_,j.path)) { r.status="cancelled_protected"; return r; }
+            r.currentBefore=currentOf(j.dir.get()); r.swapBefore=swapOf(j.dir.get());
+            r.currentAfter=r.currentBefore; r.swapAfter=r.swapBefore;
+            r.status="ok";
+            while(r.freed<j.want) {
+                if(cancel_) { r.status=slowCancel_?"cancelled_slow":(r.pulses.empty()?"cancelled":"stopped"); break; }
+                auto stat=counters(readAt(j.dir.get(),"memory.stat"));
+                const Bytes resident=add(sub(get(stat,"anon"),get(stat,"unevictable")),get(stat,"file"));
+                Bytes n=std::min(pulseLimit(o_,sub(resident,j.floorBytes),page_),sub(j.want,r.freed));
+                n-=n%page_;
+                if(n<o_.minBatch) { r.status=r.pulses.empty()?"at_floor":"floor_reached"; break; }
+                // Pace reclaim like a background thread: while a pulse runs, a donor that faults
+                // a page in is made to reclaim too, so bursts of pulses add up to visible stall.
+                if(o_.pulseRateMBps>0) {
+                    while(!cancel_ && monotonic()<nextPulse_)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    if(cancel_) continue;
+                    nextPulse_=std::max(nextPulse_,monotonic())+static_cast<double>(n)/MiB/o_.pulseRateMBps;
+                }
+                auto p=pulse(j,n,std::move(stat));
+                // A donor killed or exiting during the pulse frees its memory by exiting, not by
+                // reclaim: count nothing for that pulse and end the job.
+                bool gone=false;
+                try {
+                    p.after=currentOf(j.dir.get()); p.swapAfter=swapOf(j.dir.get());
+                    p.statAfter=counters(readAt(j.dir.get(),"memory.stat"));
+                    gone=required(counters(readAt(j.dir.get(),"cgroup.events")),"populated")==0;
+                } catch(const std::exception& e) { gone=true; p.message+="after: "+std::string(e.what()); }
+                if(gone) { p.after=p.before; p.swapAfter=p.swapBefore; p.statAfter=p.statBefore; p.status="target_gone"; }
+                else { r.currentAfter=p.after; r.swapAfter=p.swapAfter; }
+                const Bytes got=sub(p.before,p.after);
+                r.requested=add(r.requested,p.requested); r.writeMs+=p.writeMs;
+                r.freed=add(r.freed,got);
+                const bool failed=p.status!="ok";
+                const bool restored=p.restored;
+                if(failed) { r.status=p.status; r.message=p.message; if(!gone) r.err=EIO; }
+                r.pulses.push_back(std::move(p));
+                if(failed || !restored) { if(!restored) r.status="restore_failed"; break; }
+                if(got<o_.minBatch/2) { r.status="no_progress"; break; }
+            }
+        } catch(const std::exception& e) {
+            // Reading the donor failed between pulses (most likely it was killed); what was
+            // measured before stays, currentAfter is the last good reading.
+            r.status=r.pulses.empty()?"cancelled_read_error":"target_gone"; r.message=e.what();
+        }
+        r.totalMs=(monotonic()-begin)*1000;
+        return r;
+    }
+    void loop() {
+        for(;;) {
+            std::unique_lock<std::mutex> lock(mutex_);
+            cv_.wait(lock,[&]{return stop_ || pending_.has_value();});
+            if(stop_) return;
+            PulseJob job=std::move(*pending_); pending_.reset(); running_=true; cancel_=false; slowCancel_=false;
+            lock.unlock();
+            auto result=execute(std::move(job));
+            lock.lock(); completed_=std::move(result); running_=false;
+        }
+    }
+public:
+    PulseWorker(Options o,Bytes page):o_(std::move(o)),page_(page),thread_([this]{loop();}) {}
+    ~PulseWorker() {
+        { std::lock_guard<std::mutex> lock(mutex_); stop_=true; pending_.reset(); }
+        cancel_=true; cv_.notify_one();
+        if(thread_.joinable()) thread_.join();
+    }
+    bool busy() { std::lock_guard<std::mutex> lock(mutex_); return running_ || pending_ || completed_; }
+    bool submit(PulseJob job) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(running_ || pending_ || completed_ || stop_) return false;
+        pending_=std::move(job); cv_.notify_one(); return true;
+    }
+    std::optional<PulseResult> take() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto r=std::move(completed_); completed_.reset(); return r;
+    }
+    // Ends the job after the pulse in flight. slow: that pulse ran past pulse_timeout_ms.
+    void cancel(bool slow=false) { if(slow) slowCancel_=true; cancel_=true; }
+    // Path of the pulse in flight if it has run longer than limit seconds;
+    // reported once per pulse.
+    std::optional<std::string> slowPulse(double limit) {
+        const double start=pulseStart_;
+        if(!start || monotonic()-start<limit || start==cancelSentFor_) return {};
+        cancelSentFor_=start;
+        std::lock_guard<std::mutex> lock(mutex_); return pulsePath_;
+    }
+};
+struct HighState {
+    Sample previous;
+    double firstSeen=0,backoffUntil=0;
+    Bytes reference=0;   // largest anon (minus locked) + file seen
+    bool disabled=false;
+};
+using EventFn=std::function<void(const std::string&,const std::string&,const std::string&)>;
+int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& event) {
+    const auto& o=cfg.options;
+    const fs::path logs(o.logs);
+    CSV systemLog(logs/"system.csv",
+        "unix_ms,mode,mem_total,scope_free,mem_available,swap_free,zswap,zswapped,mem_some_pct,mem_full_pct,io_some_pct,pswpin,pswpout,"
+        "hinted,boost_bytes,remaining_peak_bytes,wm_low,wm_high,reclaiming,decision,target,planned_bytes",o.logMax);
+    CSV appLog(logs/"apps.csv",
+        "unix_ms,app,cgroup_inode,current_bytes,anon_bytes,unevictable_bytes,file_bytes,swap_bytes,zswap_bytes,zswapped_bytes,"
+        "refault,oom_kill,resident_bytes,reference_bytes,floor_bytes,room_bytes,high_events,psi_some_total_us,psi_full_total_us,reason",o.logMax);
+    // One row per pulse job, same columns as the memory.reclaim mode (run_round.py reads them).
+    CSV reclaimLog(logs/"reclaim.csv",
+        "unix_ms,app,status,trigger,planned_bytes,submitted_bytes,errno,write_ms,total_ms,current_before,current_after,current_change,swap_change,pgsteal_delta,pgsteal_proactive_delta,mem_available_change,mem_free_change,message",o.logMax);
+    CSV pulseLog(logs/"pulses.csv",
+        "unix_ms,app,job,pulse,status,requested_bytes,target_high,current_before,current_after,net_drop,write_ms,restored,"
+        "anon_before,anon_after,file_before,file_after,zswap_before,zswap_after,zswapped_before,zswapped_after,swap_before,swap_after,"
+        "zswpout_delta,zswpwb_delta,pswpout_delta,message",o.logMax);
+    CSV quotaLog(logs/"quota.csv",
+        "unix_ms,app,action,quota_bytes,disk_share_bytes,need_bytes,zswap_capacity_bytes,disk_capacity_bytes,deficit_bytes,disk_anon_bytes,unplaced_bytes,status",o.logMax);
+    const long ps=::sysconf(_SC_PAGESIZE);
+    if(ps<=0) throw std::runtime_error("cannot determine page size");
+    const Bytes page=static_cast<Bytes>(ps);
+    event("INFO","daemon","reclaim_interface=high: watermarks "+u(o.wmLow/MiB)+"/"+u(o.wmHigh/MiB)+" MiB, hint reserve "+
+          u(o.hintReserve/MiB)+" MiB, floor "+num(o.floorRatio)+", pulse "+u(o.pulse/MiB)+" MiB, rate limit "+
+          (o.pulseRateMBps>0?num(o.pulseRateMBps)+" MiB/s":std::string("none"))+", zswap_quota="+(o.zswapQuota?"true":"false"));
+    PulseWorker worker(o,page);
+    std::vector<HighState> states(cfg.apps.size());
+    std::map<std::string,std::size_t> index;
+    for(std::size_t i=0;i<cfg.apps.size();++i) index[cfg.apps[i].name]=i;
+    std::set<std::string> quotaSet;   // apps whose memory.zswap.max this run changed
+    Bytes plannedFor=0;               // boost_until_unix of the hint the quota plan belongs to
+    bool reclaiming=false,samplingFailed=false;
+    std::string lastBlock;
+    Bytes tick=0,job=0;
+    auto restoreQuotas=[&](const std::string& why){
+        for(const auto& name:quotaSet) {
+            std::string status="ok";
+            try { auto dir=openBeneath(root,cfg.apps[index.at(name)].path);
+                  if(int e=writeControl(dir.get(),"memory.zswap.max","max\n")) status=std::strerror(e); }
+            catch(const std::exception& e) { status=e.what(); }
+            quotaLog.row({u(unixMillis()),name,"restore","max","","","","","","","",status+" ("+why+")"});
+        }
+        quotaSet.clear();
+    };
+    auto logResult=[&](const PulseResult& r){
+        ++job;
+        int k=0;
+        for(const auto& p:r.pulses) {
+            auto d=[&](const char* key){ return u(delta(get(p.statAfter,key),get(p.statBefore,key))); };
+            pulseLog.row({u(unixMillis()),r.name,u(job),std::to_string(++k),p.status,u(p.requested),u(p.target),u(p.before),u(p.after),
+                          num(static_cast<double>(p.before)-static_cast<double>(p.after)),num(p.writeMs),p.restored?"1":"0",
+                          u(get(p.statBefore,"anon")),u(get(p.statAfter,"anon")),u(get(p.statBefore,"file")),u(get(p.statAfter,"file")),
+                          u(get(p.statBefore,"zswap")),u(get(p.statAfter,"zswap")),u(get(p.statBefore,"zswapped")),u(get(p.statAfter,"zswapped")),
+                          u(p.swapBefore),u(p.swapAfter),d("zswpout"),d("zswpwb"),d("pswpout"),p.message});
+        }
+        const bool any=!r.pulses.empty();
+        static const std::set<std::string> success{"ok","floor_reached","no_progress","stopped","cancelled_slow","target_gone"};
+        reclaimLog.row({u(unixMillis()),r.name,any&&r.freed&&success.count(r.status)?"ok":r.status,r.reason,u(r.want),u(r.requested),std::to_string(r.err),
+                        num(r.writeMs),num(r.totalMs),any?u(r.currentBefore):"",any?u(r.currentAfter):"",
+                        any?num(static_cast<double>(r.currentAfter)-static_cast<double>(r.currentBefore)):"",
+                        any?num(static_cast<double>(r.swapAfter)-static_cast<double>(r.swapBefore)):"","","","","",
+                        r.status+(r.message.empty()?"":": "+r.message)});
+    };
+    auto deadline=std::chrono::steady_clock::now();
+    while(!stopping && (!args.ticks || tick<args.ticks)) {
+        ++tick;
+        if(auto r=worker.take()) {
+            logResult(*r);
+            auto& st=states.at(r->index);
+            if(r->status=="no_progress" || r->status=="cancelled_slow") st.backoffUntil=monotonic()+o.backoffSec;
+            if(r->status=="open_error" || r->status=="write_error" || r->status=="restore_failed") {
+                st.disabled=true;
+                event("ERROR",r->name,"high pulses disabled for this app: "+r->status+" "+r->message);
+            }
+        }
+        if(auto path=worker.slowPulse(o.pulseTimeoutMs/1000.0)) {
+            try { auto dir=openBeneath(root,*path); writeControl(dir.get(),"memory.high","max\n"); } catch(const std::exception&) {}
+            worker.cancel(true);
+            event("WARN","worker","memory.high pulse exceeded pulse_timeout_ms; restored max to cancel it");
+        }
+        System s;
+        try { s=machineSample(o,root); }
+        catch(const std::exception& e) { event("ERROR","system",e.what()); samplingFailed=true; break; }
+        Control ctl; std::string block;
+        try {
+            ctl=controlNow(o);
+            for(const auto& n:ctl.protectedApps) if(!index.count(n)) throw std::runtime_error("unknown protected app: "+n);
+            for(const auto& [n,b]:ctl.peakTargets) if(!index.count(n)) throw std::runtime_error("unknown peak target app: "+n);
+            if(ctl.paused) block="manual_pause";
+        } catch(const std::exception& e) {
+            ctl=Control{}; block="control_invalid";
+            if(lastBlock!=block) event("ERROR","control",e.what());
+        }
+        if(o.requirePSI && (!s.mem.valid || !s.io.valid)) block="psi_unavailable";
+        if(block!=lastBlock) {
+            if(!block.empty()) event("WARN","policy","pulses paused: "+block);
+            else if(!lastBlock.empty()) event("INFO","policy","pulses resumed");
+            lastBlock=block;
+        }
+        const bool hinted=ctl.until>unixSeconds() && ctl.boost>0;
+        // Per-app samples.
+        std::vector<Sample> cur(cfg.apps.size());
+        std::vector<FD> dirs(cfg.apps.size());
+        std::map<std::string,Bytes> currents;
+        for(std::size_t i=0;i<cfg.apps.size();++i) {
+            const auto& app=cfg.apps[i]; auto& st=states[i];
+            try {
+                dirs[i]=openBeneath(root,app.path); cur[i]=sampleAt(dirs[i].get());
+                if(!args.fixture && isOwnTarget(o,app.path)) throw std::runtime_error("daemon moved inside target");
+            } catch(const std::exception& e) {
+                if(st.previous.valid || tick==1 || tick%60==0) event("WARN",app.name,e.what());
+                cur[i].valid=false; st.previous={}; continue;
+            }
+            const auto& prev=st.previous;
+            if(!prev.valid || prev.inode!=cur[i].inode || prev.device!=cur[i].device) {
+                st=HighState{}; st.firstSeen=s.time;
+                // A fresh cgroup starts with max; an old one may hold a limit from a crashed run.
+                if(args.apply && app.reclaim) {
+                    writeControl(dirs[i].get(),"memory.high","max\n");
+                    if(o.zswapQuota) writeControl(dirs[i].get(),"memory.zswap.max","max\n");
+                }
+                event("INFO",app.name,"new/restarted cgroup");
+            }
+            st.reference=std::max(st.reference,residentOf(cur[i]));
+            st.previous=cur[i];
+            currents[app.name]=cur[i].current;
+        }
+        const Bytes remaining=!hinted?0:(ctl.peakTargets.empty()?ctl.boost:remainingPeak(ctl.peakTargets,currents));
+        auto wm=watermarks(o,hinted,remaining);
+        wm.high=std::min(wm.high,s.total); wm.low=std::min(wm.low,wm.high);
+        if(!reclaiming && s.free<wm.low) { reclaiming=true; event("INFO","policy","free "+u(s.free/MiB)+" MiB below low watermark "+u(wm.low/MiB)+" MiB; reclaim until "+u(wm.high/MiB)+" MiB"); }
+        else if(reclaiming && s.free>=wm.high) { reclaiming=false; event("INFO","policy","free "+u(s.free/MiB)+" MiB reached high watermark "+u(wm.high/MiB)+" MiB"); }
+        // The worker re-reads nothing between pulses except the donor; stop its job here once
+        // free is back at the high watermark or pulses are blocked.
+        if(worker.busy() && (!reclaiming || !block.empty())) worker.cancel();
+        // Donor view: background apps that may give memory now.
+        auto eligible=[&](std::size_t i,std::string& why)->bool{
+            const auto& app=cfg.apps[i]; const auto& st=states[i];
+            if(!app.reclaim || ctl.protectedApps.count(app.name)) { why="protected"; return false; }
+            if(!cur[i].valid || !cur[i].populated) { why="not_running"; return false; }
+            if(s.time-st.firstSeen<o.warmupSec) { why="startup_grace"; return false; }
+            if(st.disabled) { why="target_disabled"; return false; }
+            if(monotonic()<st.backoffUntil) { why="backoff"; return false; }
+            return true;
+        };
+        // zswap quota plan, once per hint, before any of that hint's reclaim.
+        if(o.zswapQuota && hinted && ctl.until!=plannedFor && block.empty()) {
+            plannedFor=ctl.until;
+            if(!quotaSet.empty()) restoreQuotas("new hint");
+            std::vector<DonorView> donors;
+            for(std::size_t i=0;i<cfg.apps.size();++i) {
+                std::string why;
+                if(!eligible(i,why) && why!="backoff") continue;
+                donors.push_back({cfg.apps[i].name,cfg.apps[i].priority,sub(cur[i].anon,cur[i].unevictable),cur[i].file,states[i].reference});
+            }
+            const auto plan=planZswapQuotas(o,donors,sub(wm.high,s.free),page);
+            quotaLog.row({u(unixMillis()),"*","plan","","",u(plan.need),u(plan.zswapCapacity),u(plan.diskCapacity),u(plan.deficit),
+                          u(plan.diskAnon),u(plan.unplaced),plan.quota.empty()?"no quota needed":u(plan.quota.size())+" apps"});
+            for(const auto& [name,q]:plan.quota) {
+                std::string status=args.apply?"ok":"observe_only";
+                if(args.apply) {
+                    try { auto dir=openBeneath(root,cfg.apps[index.at(name)].path);
+                          if(int e=writeControl(dir.get(),"memory.zswap.max",u(q)+"\n")) status=std::strerror(e); else quotaSet.insert(name); }
+                    catch(const std::exception& e) { status=e.what(); }
+                }
+                quotaLog.row({u(unixMillis()),name,args.apply?"set":"would_set",u(q),u(plan.diskShare.at(name)),"","","","","","",status});
+            }
+            event("INFO","policy","zswap quota plan: need "+u(plan.need/MiB)+" MiB, all-zswap capacity "+u(plan.zswapCapacity/MiB)+
+                  " MiB, anon to disk "+u(plan.diskAnon/MiB)+" MiB in "+u(plan.quota.size())+" apps");
+        }
+        if(!hinted && !quotaSet.empty()) restoreQuotas("hint ended");
+        // Most expendable eligible donor with room above its floor.
+        std::optional<std::size_t> best;
+        for(std::size_t i=0;i<cfg.apps.size();++i) {
+            const auto& app=cfg.apps[i]; const auto& st=states[i];
+            std::string why="eligible";
+            Bytes floorBytes=0,room=0;
+            if(cur[i].valid) { floorBytes=amount(o.floorRatio*static_cast<double>(st.reference)); room=sub(residentOf(cur[i]),floorBytes); }
+            if(eligible(i,why)) {
+                if(pulseLimit(o,room,page)<o.minBatch) why="at_floor";
+                else if(!best || app.priority>cfg.apps[*best].priority) best=i;
+            }
+            if(cur[i].valid)
+                appLog.row({u(unixMillis()),app.name,u(cur[i].inode),u(cur[i].current),u(cur[i].anon),u(cur[i].unevictable),u(cur[i].file),
+                            u(cur[i].swap),u(cur[i].zswap),u(cur[i].zswapped),u(cur[i].refault),u(cur[i].oomKills),u(residentOf(cur[i])),
+                            u(st.reference),u(floorBytes),u(room),u(cur[i].highEvents),u(cur[i].psi.someTotal),u(cur[i].psi.fullTotal),why});
+        }
+        std::string decision=block.empty()?(reclaiming?"reclaiming":"monitor"):block,target;
+        Bytes planned=0;
+        if(reclaiming && block.empty() && best && !stopping) {
+            Bytes want=sub(wm.high,s.free); want-=want%page;
+            if(want>=o.minBatch) {
+                const auto i=*best; target=cfg.apps[i].name; planned=want;
+                const std::string reason=hinted?"peak_hint":"low_watermark";
+                if(args.apply) {
+                    PulseJob j; j.index=i; j.name=target; j.path=cfg.apps[i].path; j.reason=reason; j.dir=std::move(dirs[i]);
+                    j.want=want; j.floorBytes=amount(o.floorRatio*static_cast<double>(states[i].reference));
+                    decision=worker.submit(std::move(j))?"submitted":"worker_busy";
+                } else {
+                    reclaimLog.row({u(unixMillis()),target,"observe_only",reason,u(want),"0","0","","","","","","","","","","",""});
+                    decision="would_pulse";
+                }
+            }
+        }
+        systemLog.row({u(unixMillis()),args.apply?"apply":"observe",u(s.total),u(s.free),u(s.available),u(s.swapFree),u(s.zswap),u(s.zswapped),
+                       num(s.mem.some10),num(s.mem.full10),num(s.io.some10),u(s.pswpin),u(s.pswpout),hinted?"1":"0",u(hinted?ctl.boost:0),
+                       u(remaining),u(wm.low),u(wm.high),reclaiming?"1":"0",decision,target,u(planned)});
+        deadline+=std::chrono::milliseconds(o.intervalMs);
+        if(deadline<std::chrono::steady_clock::now()) deadline=std::chrono::steady_clock::now();
+        while(!stopping && std::chrono::steady_clock::now()<deadline) {
+            auto remain=deadline-std::chrono::steady_clock::now();
+            std::this_thread::sleep_for(std::min(remain,std::chrono::duration_cast<decltype(remain)>(std::chrono::milliseconds(50))));
+            if(auto path=worker.slowPulse(o.pulseTimeoutMs/1000.0)) {
+                try { auto dir=openBeneath(root,*path); writeControl(dir.get(),"memory.high","max\n"); } catch(const std::exception&) {}
+                worker.cancel(true);
+                event("WARN","worker","memory.high pulse exceeded pulse_timeout_ms; restored max to cancel it");
+            }
+        }
+    }
+    event("INFO","daemon","stopping; waiting for the pulse in flight (it restores memory.high=max)");
+    worker.cancel();
+    while(worker.busy()) {
+        if(auto r=worker.take()) { logResult(*r); break; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if(!quotaSet.empty()) restoreQuotas("daemon stopping");
+    return samplingFailed?2:0;
+}
 int run(const Args& args) {
     harmony_v1::validateBackendRequest(args.backend,args.apply);
     if(args.backend!="linux-v2" && args.fixture)
@@ -269,7 +687,7 @@ int run(const Args& args) {
             try {
                 auto fd=openBeneath(root.get(),app.path); auto s=sampleAt(fd.get());
                 s.swapRoom=ancestorSwapRoom(root.get(),app.path);
-                FD reclaim(::openat(fd.get(),"memory.reclaim",O_WRONLY|O_CLOEXEC|O_NOFOLLOW));
+                FD reclaim(::openat(fd.get(),o.reclaimInterface=="high"?"memory.high":"memory.reclaim",O_WRONLY|O_CLOEXEC|O_NOFOLLOW));
                 bool writable=reclaim.get()>=0;
                 std::cout<<app.name<<" current_MiB="<<s.current/MiB<<" donor="<<app.reclaim
                          <<" reclaim_writable="<<writable<<" ancestor_swap_room_MiB="
@@ -284,17 +702,22 @@ int run(const Args& args) {
     if(lock.get()<0) throw error("open lock_file (create its parent directory first)");
     if(::flock(lock.get(),LOCK_EX|LOCK_NB)!=0) throw error("another daemon holds lock_file");
     fs::create_directories(o.logs);
+    CSV events(fs::path(o.logs)/"events.csv","unix_ms,level,app,message",o.logMax);
+    auto event=[&](const std::string& level,const std::string& app,const std::string& message){
+        events.row({u(unixMillis()),level,app,message});
+        std::cerr<<level<<" "<<app<<" "<<message<<'\n';
+    };
+    if(o.reclaimInterface=="high") {
+        event("INFO","daemon",std::string("mode=")+(args.apply?"APPLY":"OBSERVE")+"; watermark + memory.high pulses; targets="+u(cfg.apps.size()));
+        event("WARN","daemon","scope memory policy: machine="+o.scope+" memory.max="+u(initial.total)+"; host meminfo not used");
+        return runHigh(args,cfg,root.get(),event);
+    }
     CSV systemLog(fs::path(o.logs)/"system.csv",
         "unix_ms,mode,mem_total,mem_available,mem_free,swap_free,zswap,zswapped,predicted_available,decline_bytes_s,deficit_bytes,boost_bytes,mem_some_pct,mem_full_pct,io_some_pct,pswpin,pswpout,episode,decision,target,planned_bytes",o.logMax);
     CSV appLog(fs::path(o.logs)/"apps.csv",
         "unix_ms,app,cgroup_inode,current_bytes,anon_bytes,file_bytes,inactive_anon,inactive_file,swap_bytes,pgfault,pgmajfault,refault,oom_kill,pgsteal,app_some_pct,growth_bytes_s,refault_activity_bytes_s,major_per_s,adaptive,cold_hint_bytes,budget_bytes,reason",o.logMax);
     CSV reclaimLog(fs::path(o.logs)/"reclaim.csv",
         "unix_ms,app,status,trigger,planned_bytes,submitted_bytes,errno,write_ms,total_ms,current_before,current_after,current_change,swap_change,pgsteal_delta,pgsteal_proactive_delta,mem_available_change,mem_free_change,message",o.logMax);
-    CSV events(fs::path(o.logs)/"events.csv","unix_ms,level,app,message",o.logMax);
-    auto event=[&](const std::string& level,const std::string& app,const std::string& message){
-        events.row({u(unixMillis()),level,app,message});
-        std::cerr<<level<<" "<<app<<" "<<message<<'\n';
-    };
     event("INFO","daemon",std::string("mode=")+(args.apply?"APPLY":"OBSERVE")+"; baseline EWMA, not ML/WSS; targets="+u(cfg.apps.size()));
     if(o.scope.empty())
         event("WARN","daemon","host-wide memory policy; not a container/ancestor memory.max quota controller; foreground integration is external");

@@ -8,6 +8,21 @@
 // typical task during a launch). STARTUP_READY marks the end of the startup
 // attempt: after the task's release, or right after DAILY_READY without one.
 // --exit-after-peak S closes the app S seconds after its task (user closes it).
+// --locked-mib X adds X MiB of anonymous memory locked with mlock: it counts in
+// the cgroup but can never be reclaimed (stands in for kernel memory).
+// --peak-compress-ratio R fills peak pages like daily ones (about R times
+// compressible) instead of random or one-word pages.
+// --touch-file 1 makes SIGUSR1 also read the clean file back (dropped page
+// cache comes back from disk).
+// --hot-anon-mib A --hot-file-mib F --hot-period P: memory still in use while
+// the app sits in the background. The first A MiB of daily anon and the first F
+// MiB of the clean file are touched once per P seconds, a slice every second.
+// --peak-curve FILE: the peak follows a measured curve instead of a constant rate. FILE has
+// one "seconds MiB" pair per line: how much peak memory should be in use that long after
+// PEAK_BEGIN (non-decreasing; the last value is the whole peak).
+// --peak-hot-file-mib F --peak-hot-period P: while a peak runs (PEAK_BEGIN to
+// PEAK_RELEASE) the app also reads the first F MiB of its clean file once per P
+// seconds (code and data it uses for the task).
 // Every phase is appended to an event log with write(2) so lines survive an
 // OOM kill.
 #include <algorithm>
@@ -43,10 +58,11 @@ double boottime() {
 }
 
 struct Args {
-    std::string name = "app", log, dataDir;
+    std::string name = "app", log, dataDir, peakCurve;
     double anonMiB = 0, cleanMiB = 0, dirtyMiB = 0, dirtyRate = 0;
     double peakMiB = 0, peakRate = 0, hold = 0, peakDeadline = 30, ttl = 600, peakPageOnly = 0, compressRatio = 1;
-    double peakAfter = -1, exitAfterPeak = -1;
+    double peakAfter = -1, exitAfterPeak = -1, lockedMiB = 0, peakCompressRatio = 0, touchFile = 0;
+    double hotAnonMiB = 0, hotFileMiB = 0, hotPeriod = 120, peakHotFileMiB = 0, peakHotPeriod = 10;
     std::uint64_t seed = 1;
 };
 
@@ -94,12 +110,14 @@ unsigned char* mapAnon(std::size_t bytes) {
 // Touch at a bounded rate (MiB/s, 0 = unbounded) so a peak can ramp.
 // pageOnly writes one random word per page: allocation then runs at page-fault
 // speed instead of fill speed, like an app that maps and touches a big buffer.
-void touchRamp(unsigned char* p, std::size_t bytes, double rate, Rng& rng, bool pageOnly) {
+void touchRamp(unsigned char* p, std::size_t bytes, double rate, Rng& rng, bool pageOnly, double compressRatio) {
     const std::size_t step = 16 * MiB;
     const double begin = boottime();
     for (std::size_t done = 0; done < bytes && !stopping; done += step) {
         const std::size_t n = std::min(step, bytes - done);
-        if (pageOnly) {
+        if (compressRatio > 0) {
+            fillCompressible(p + done, n, rng, compressRatio);
+        } else if (pageOnly) {
             for (std::size_t off = 0; off < n; off += 4096)
                 *reinterpret_cast<std::uint64_t*>(p + done + off) = rng.next();
         } else {
@@ -159,11 +177,16 @@ Args parse(int argc, char** argv) {
     if (kv.count("name")) a.name = kv["name"];
     if (kv.count("log")) a.log = kv["log"];
     if (kv.count("data-dir")) a.dataDir = kv["data-dir"];
+    if (kv.count("peak-curve")) a.peakCurve = kv["peak-curve"];
     if (kv.count("seed")) a.seed = std::stoull(kv["seed"]);
     num("anon-mib", a.anonMiB); num("clean-mib", a.cleanMiB); num("dirty-mib", a.dirtyMiB);
     num("dirty-rate", a.dirtyRate); num("peak-mib", a.peakMiB); num("peak-page-only", a.peakPageOnly);
     num("compress-ratio", a.compressRatio);
     num("peak-after", a.peakAfter); num("exit-after-peak", a.exitAfterPeak);
+    num("locked-mib", a.lockedMiB); num("peak-compress-ratio", a.peakCompressRatio); num("touch-file", a.touchFile);
+    num("hot-anon-mib", a.hotAnonMiB); num("hot-file-mib", a.hotFileMiB); num("hot-period", a.hotPeriod);
+    num("peak-hot-file-mib", a.peakHotFileMiB); num("peak-hot-period", a.peakHotPeriod);
+    if (a.hotPeriod < 1 || a.peakHotPeriod < 1) throw std::runtime_error("hot periods must be >= 1");
     num("peak-rate", a.peakRate); num("hold", a.hold); num("peak-deadline", a.peakDeadline); num("ttl", a.ttl);
     if (a.ttl <= 0 || a.ttl > 3600) throw std::runtime_error("ttl must be in (0,3600]");
     if ((a.cleanMiB > 0 || a.dirtyMiB > 0) && a.dataDir.empty()) throw std::runtime_error("files need --data-dir");
@@ -173,12 +196,80 @@ Args parse(int argc, char** argv) {
 std::size_t bytesOf(double mib) { return static_cast<std::size_t>(mib * MiB) / 4096 * 4096; }
 } // namespace
 
+// Reads slices of the clean file until done is set: the file pages a task uses.
+void peakHotReader(const Args& a, const std::atomic<bool>& done) {
+    const std::size_t total = std::min(bytesOf(a.cleanMiB), bytesOf(a.peakHotFileMiB));
+    int fd = ::open((a.dataDir + "/" + a.name + ".clean").c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0 || !total) { if (fd >= 0) ::close(fd); return; }
+    const std::size_t slices = static_cast<std::size_t>(a.peakHotPeriod);
+    const std::size_t step = (total / slices + 4095) / 4096 * 4096;
+    std::vector<unsigned char> buf(256 * 1024);
+    std::size_t slice = 0;
+    double next = boottime();
+    while (!done && !stopping) {
+        const double t = boottime();
+        const std::size_t f0 = std::min(total, slice * step), f1 = std::min(total, (slice + 1) * step);
+        for (std::size_t off = f0; off < f1 && !done && !stopping; off += buf.size())
+            if (::pread(fd, buf.data(), std::min(buf.size(), f1 - off), static_cast<off_t>(off)) <= 0) break;
+        const double ms = (boottime() - t) * 1000;
+        if (ms >= 100) { char b[64]; std::snprintf(b, sizeof(b), "PEAK_HOT_SLOW ms=%.0f", ms); logEvent(b); }
+        slice = (slice + 1) % slices;
+        next += 1.0;
+        while (!done && !stopping && boottime() < next) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ::close(fd);
+}
+
+// Allocates [0, bytes) following a measured curve: (seconds, MiB) points, linear in between.
+void touchCurve(unsigned char* p, std::size_t bytes, const std::vector<std::pair<double, double>>& curve,
+                Rng& rng, double compressRatio) {
+    const double begin = boottime();
+    const std::size_t step = MiB;
+    std::size_t done = 0;
+    std::size_t k = 0;
+    while (done < bytes && !stopping) {
+        const double t = boottime() - begin;
+        while (k + 1 < curve.size() && curve[k + 1].first <= t) ++k;
+        double mib = curve.back().second;
+        if (k + 1 < curve.size()) {
+            const auto [ta, va] = curve[k];
+            const auto [tb, vb] = curve[k + 1];
+            mib = tb > ta ? va + (vb - va) * std::max(0.0, t - ta) / (tb - ta) : vb;
+        }
+        // Past the last point the whole peak is due, even if the curve ends slightly short.
+        const std::size_t target = t >= curve.back().first ? bytes : std::min(bytes, bytesOf(mib));
+        if (done + step <= target || (target == bytes && done < bytes)) {
+            const std::size_t n = std::min(step, bytes - done);
+            if (compressRatio > 0) fillCompressible(p + done, n, rng, compressRatio);
+            else fill(p + done, n, rng);
+            done += n;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+}
+
+std::vector<std::pair<double, double>> readCurve(const std::string& path) {
+    std::vector<std::pair<double, double>> c;
+    FILE* f = std::fopen(path.c_str(), "r");
+    if (!f) throw std::runtime_error("open peak curve " + path);
+    double t = 0, m = 0;
+    while (std::fscanf(f, "%lf %lf", &t, &m) == 2) c.emplace_back(t, m);
+    std::fclose(f);
+    if (c.empty()) throw std::runtime_error("empty peak curve " + path);
+    return c;
+}
+
 void runPeak(const Args& a, Rng& rng) {
     const auto bytes = bytesOf(a.peakMiB);
     const double t = boottime();
     logEvent("PEAK_BEGIN mib=" + std::to_string(static_cast<long>(a.peakMiB)));
+    std::atomic<bool> hotDone{false};
+    std::thread hot;
+    if (a.peakHotFileMiB > 0 && a.cleanMiB > 0) hot = std::thread(peakHotReader, std::cref(a), std::cref(hotDone));
     auto* p = mapAnon(bytes);
-    touchRamp(p, bytes, a.peakRate, rng, a.peakPageOnly > 0);
+    if (!a.peakCurve.empty()) touchCurve(p, bytes, readCurve(a.peakCurve), rng, a.peakCompressRatio);
+    else touchRamp(p, bytes, a.peakRate, rng, a.peakPageOnly > 0, a.peakCompressRatio);
     const double ms = (boottime() - t) * 1000;
     char buf[96];
     std::snprintf(buf, sizeof(buf), "PEAK_DONE ms=%.0f timeout=%d", ms, ms > a.peakDeadline * 1000 ? 1 : 0);
@@ -189,6 +280,8 @@ void runPeak(const Args& a, Rng& rng) {
         for (std::size_t off = 0; off < bytes; off += 4096) p[off] ^= 1;
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
+    hotDone = true;
+    if (hot.joinable()) hot.join();
     ::munmap(p, bytes);
     logEvent("PEAK_RELEASE");
 }
@@ -205,11 +298,17 @@ int main(int argc, char** argv) {
     Rng rng{a.seed * 0x9e3779b97f4a7c15ULL + 1};
     std::thread writer;
     unsigned char* anon = nullptr;
-    const std::size_t anonBytes = bytesOf(a.anonMiB);
+    const std::size_t anonBytes = bytesOf(a.anonMiB), lockedBytes = bytesOf(a.lockedMiB);
     try {
         if (anonBytes > 0) {
             anon = mapAnon(anonBytes);
             fillCompressible(anon, anonBytes, rng, a.compressRatio); // touched once, then left cold
+        }
+        if (lockedBytes > 0) {
+            auto* locked = mapAnon(lockedBytes);
+            fillCompressible(locked, lockedBytes, rng, a.compressRatio);
+            if (::mlock(locked, lockedBytes) != 0)
+                throw std::runtime_error(std::string("mlock (raise LimitMEMLOCK): ") + std::strerror(errno));
         }
         if (a.cleanMiB > 0) writeFile(a.dataDir + "/" + a.name + ".clean", bytesOf(a.cleanMiB), rng, true);
         if (a.dirtyMiB > 0) {
@@ -218,8 +317,8 @@ int main(int argc, char** argv) {
             if (a.dirtyRate > 0) writer = std::thread(dirtyWriter, path, bytesOf(a.dirtyMiB), a.dirtyRate, a.seed + 7);
         }
         char buf[160];
-        std::snprintf(buf, sizeof(buf), "DAILY_READY ms=%.0f anon_mib=%.0f clean_mib=%.0f dirty_mib=%.0f",
-                      (boottime() - start) * 1000, a.anonMiB, a.cleanMiB, a.dirtyMiB);
+        std::snprintf(buf, sizeof(buf), "DAILY_READY ms=%.0f anon_mib=%.0f clean_mib=%.0f dirty_mib=%.0f locked_mib=%.0f",
+                      (boottime() - start) * 1000, a.anonMiB, a.cleanMiB, a.dirtyMiB, a.lockedMiB);
         logEvent(buf);
         if (a.peakMiB > 0 && a.peakAfter >= 0) {
             const double at = boottime() + a.peakAfter;
@@ -228,13 +327,50 @@ int main(int argc, char** argv) {
         }
         if (!stopping) logEvent("STARTUP_READY ms=" + std::to_string(static_cast<long>((boottime() - start) * 1000)));
         const double closeAt = a.exitAfterPeak >= 0 ? boottime() + a.exitAfterPeak : deadline;
+        // Hot set: slices of anon pages and of the clean file, one slice per second.
+        const std::size_t hotAnon = std::min(anonBytes, bytesOf(a.hotAnonMiB));
+        const std::size_t hotFile = std::min(bytesOf(a.cleanMiB), bytesOf(a.hotFileMiB));
+        const std::size_t slices = static_cast<std::size_t>(a.hotPeriod);
+        std::size_t slice = 0;
+        double nextHot = boottime() + 1.0;
+        int hotFd = hotFile ? ::open((a.dataDir + "/" + a.name + ".clean").c_str(), O_RDONLY | O_CLOEXEC) : -1;
+        std::vector<unsigned char> hotBuf(hotFd >= 0 ? 256 * 1024 : 0);
         while (!stopping && boottime() < std::min(deadline, closeAt)) {
+            if ((hotAnon || hotFd >= 0) && boottime() >= nextHot) {
+                nextHot += 1.0;
+                const double t = boottime();
+                const auto part = [&](std::size_t total) {
+                    const std::size_t step = (total / slices + 4095) / 4096 * 4096;
+                    return std::make_pair(std::min(total, slice * step), std::min(total, (slice + 1) * step));
+                };
+                volatile unsigned char sink = 0;
+                const auto [a0, a1] = part(hotAnon);
+                for (std::size_t off = a0; anon && off < a1 && !stopping; off += 4096) sink = sink + anon[off];
+                const auto [f0, f1] = part(hotFile);
+                for (std::size_t off = f0; hotFd >= 0 && off < f1 && !stopping; off += hotBuf.size())
+                    if (::pread(hotFd, hotBuf.data(), std::min(hotBuf.size(), f1 - off), static_cast<off_t>(off)) <= 0) break;
+                slice = (slice + 1) % slices;
+                const double ms = (boottime() - t) * 1000;
+                if (ms >= 100) { std::snprintf(buf, sizeof(buf), "HOT_SLOW ms=%.0f", ms); logEvent(buf); }
+            }
             if (touchRequested) {
                 touchRequested = 0;
                 const double t = boottime();
                 logEvent("TOUCH_BEGIN");
                 for (std::size_t off = 0; anon && off < anonBytes && !stopping; off += 4096) anon[off] ^= 1;
-                std::snprintf(buf, sizeof(buf), "TOUCH_DONE ms=%.0f", (boottime() - t) * 1000);
+                const double anonDone = boottime();
+                if (a.touchFile > 0 && a.cleanMiB > 0) {
+                    // Read the clean file back; pages dropped by reclaim come from disk.
+                    int fd = ::open((a.dataDir + "/" + a.name + ".clean").c_str(), O_RDONLY | O_CLOEXEC);
+                    if (fd >= 0) {
+                        std::vector<unsigned char> rb(MiB);
+                        while (!stopping && ::read(fd, rb.data(), rb.size()) > 0) {}
+                        ::close(fd);
+                    }
+                }
+                const double end = boottime();
+                std::snprintf(buf, sizeof(buf), "TOUCH_DONE ms=%.0f anon_ms=%.0f file_ms=%.0f",
+                              (end - t) * 1000, (anonDone - t) * 1000, (end - anonDone) * 1000);
                 logEvent(buf);
             }
             if (peakRequested) {
@@ -243,6 +379,7 @@ int main(int argc, char** argv) {
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
+        if (hotFd >= 0) ::close(hotFd);
     } catch (const std::exception& e) {
         logEvent(std::string("ERROR ") + e.what());
         stopping = true;

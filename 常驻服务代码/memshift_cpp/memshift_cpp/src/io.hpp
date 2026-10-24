@@ -125,6 +125,7 @@ inline Sample sampleAt(int fd) {
         a.refault = add(get(v,"workingset_refault_file"),get(v,"workingset_refault_anon"));
     else a.refault = required(v,"workingset_refault");
     a.pgsteal = get(v,"pgsteal");
+    a.zswap = get(v,"zswap"); a.zswapped = get(v,"zswapped");
     a.hasProactive = v.count("pgsteal_proactive") != 0;
     a.pgstealProactive = get(v,"pgsteal_proactive");
     auto sw = maybeAt(fd,"memory.swap.current");
@@ -134,7 +135,9 @@ inline Sample sampleAt(int fd) {
     const auto lowText = trim(readAt(fd,"memory.low"));
     a.min = minText == "max" ? Unlimited : uintValue(minText);
     a.low = lowText == "max" ? Unlimited : uintValue(lowText);
-    a.oomKills = required(counters(readAt(fd,"memory.events")),"oom_kill");
+    const auto events = counters(readAt(fd,"memory.events"));
+    a.oomKills = required(events,"oom_kill");
+    a.highEvents = get(events,"high");
     a.populated = required(counters(readAt(fd,"cgroup.events")),"populated") != 0;
     auto ps = maybeAt(fd,"memory.pressure");
     if (ps) a.psi = parsePSI(*ps);
@@ -270,6 +273,20 @@ inline Configuration parseConfig(const std::string& text) {
         else if(k=="log_max_mb") o.logMax=mbValue(v);
         else if(k=="max_boost_mb") o.maxBoost=mbValue(v);
         else if(k=="boost_cap_fraction") o.boostCapFraction=realValue(v);
+        else if(k=="reclaim_interface") {
+            if(v!="reclaim" && v!="high") throw std::runtime_error("reclaim_interface: reclaim/high");
+            o.reclaimInterface=v;
+        }
+        else if(k=="wm_low_mb") o.wmLow=mbValue(v);
+        else if(k=="wm_high_mb") o.wmHigh=mbValue(v);
+        else if(k=="hint_reserve_mb") o.hintReserve=mbValue(v);
+        else if(k=="hint_gap_mb") o.hintGap=mbValue(v);
+        else if(k=="floor_ratio") o.floorRatio=realValue(v);
+        else if(k=="assumed_compress_ratio") o.assumedCompressRatio=realValue(v);
+        else if(k=="pulse_mb") o.pulse=mbValue(v);
+        else if(k=="pulse_timeout_ms") { auto n=uintValue(v); if(n<100 || n>60000) throw std::runtime_error("pulse_timeout_ms: 100..60000"); o.pulseTimeoutMs=static_cast<unsigned>(n); }
+        else if(k=="zswap_quota") o.zswapQuota=boolValue(v);
+        else if(k=="pulse_rate_mb_s") { o.pulseRateMBps=realValue(v); if(o.pulseRateMBps<0 || o.pulseRateMBps>100000) throw std::runtime_error("pulse_rate_mb_s: 0..100000"); }
         else throw std::runtime_error("unknown daemon key: " + k);
     };
     while (std::getline(in,line)) {
@@ -292,6 +309,12 @@ inline Configuration parseConfig(const std::string& text) {
         else if(k=="reclaim") app->reclaim=boolValue(v);
         else if(k=="wps_window_gate") app->wpsWindowGate=boolValue(v);
         else if(k=="min_keep_mb") app->keep=mbValue(v);
+        else if(k=="priority") {
+            std::size_t n=0; int p=0;
+            try { p=std::stoi(v,&n); } catch(const std::exception&) { n=0; }
+            if(n!=v.size() || p<-1000 || p>1000) throw std::runtime_error("priority: integer -1000..1000");
+            app->priority=p;
+        }
         else throw std::runtime_error("unknown app key: "+k);
     }
     const auto& o=c.options;
@@ -312,6 +335,16 @@ inline Configuration parseConfig(const std::string& text) {
     check(o.minBatch>=MiB && o.batch>=o.minBatch && (o.oracleMode || o.batch<=(o.dailyKnownCapacity?1536:(o.dailyKnownStrength?1024:256))*MiB),"batch_mb exceeds mode-specific limit or is below min_batch_mb");
     check(o.perMinute>=o.batch && o.appPerMinute>=o.minBatch && o.logMax>=MiB,"invalid rate/log limits");
     check(o.boostCapFraction>0 && o.boostCapFraction<=1,"boost_cap_fraction: (0,1]");
+    if(o.reclaimInterface=="high") {
+        check(!o.scope.empty(),"reclaim_interface=high requires scope_cgroup");
+        check(!o.oracleMode && !o.dailyAsync,"reclaim_interface=high is linux-v2 only");
+        check(o.wmHigh>o.wmLow && o.hintGap>=MiB,"wm_high_mb must exceed wm_low_mb; hint_gap_mb >= 1");
+        check(std::isfinite(o.floorRatio) && o.floorRatio>=0 && o.floorRatio<1,"floor_ratio: [0,1)");
+        check(std::isfinite(o.assumedCompressRatio) && o.assumedCompressRatio>=1 && o.assumedCompressRatio<=20,
+              "assumed_compress_ratio: 1..20");
+        check(o.pulse>=o.minBatch && o.pulse<=1024*MiB,"pulse_mb: min_batch_mb..1024");
+    }
+    check(!o.zswapQuota || o.reclaimInterface=="high","zswap_quota requires reclaim_interface=high");
     if(o.oracleMode) {
         check(!o.oracleSchedule.empty() && !o.oracleLedger.empty(),"oracle mode requires separate schedule and ledger files");
         check(o.oracleBatch>=MiB && o.oracleGlobalCap>=o.oracleBatch && o.oracleCaseCap>=o.oracleBatch && o.oracleAppCap>=o.oracleBatch,"invalid oracle independent caps");
@@ -424,7 +457,24 @@ struct Control {
     bool paused=false;
     std::set<std::string> protectedApps;
     Bytes boost=0, until=0;
+    // Optional, "high" mode: size each peak app will reach at its peak (bytes),
+    // valid until boost_until_unix together with the boost.
+    std::map<std::string,Bytes> peakTargets;
 };
+// "name:MiB,name:MiB" (empty = none).
+inline std::map<std::string,Bytes> parsePeakTargets(const std::string& v) {
+    std::map<std::string,Bytes> out;
+    std::istringstream items(v); std::string item;
+    while(std::getline(items,item,',')) {
+        item=trim(item); if(item.empty()) continue;
+        const auto pos=item.find(':');
+        if(pos==std::string::npos) throw std::runtime_error("peak target must be name:MiB");
+        const auto name=trim(item.substr(0,pos));
+        if(!safeName(name)) throw std::runtime_error("invalid peak target app name");
+        if(!out.emplace(name,mbValue(trim(item.substr(pos+1)))).second) throw std::runtime_error("duplicate peak target");
+    }
+    return out;
+}
 inline Control parseControl(const std::string& text) {
     Control c; std::set<std::string> seen;
     std::istringstream in(text); std::string line;
@@ -438,14 +488,21 @@ inline Control parseControl(const std::string& text) {
             while(std::getline(names,n,',')) { n=trim(n); if(!safeName(n)) throw std::runtime_error("invalid protected app name"); c.protectedApps.insert(n); }
         } else if(k=="reserve_extra_mb") c.boost=mbValue(v);
         else if(k=="boost_until_unix") c.until=uintValue(v);
+        else if(k=="peak_targets") c.peakTargets=parsePeakTargets(v);
         else throw std::runtime_error("unknown control key: "+k);
     }
-    if(seen.size()!=4) throw std::runtime_error("control file must contain all four keys");
+    if(seen.size()-seen.count("peak_targets")!=4) throw std::runtime_error("control file must contain all four keys");
     return c;
 }
 inline std::string controlText(const Control& c) {
     std::string names; for(auto& n:c.protectedApps) { if(!names.empty()) names+=','; names+=n; }
-    return "paused="+std::string(c.paused?"true":"false")+"\nprotected_apps="+names+
+    std::string text="paused="+std::string(c.paused?"true":"false")+"\nprotected_apps="+names+
            "\nreserve_extra_mb="+std::to_string(c.boost/MiB)+"\nboost_until_unix="+std::to_string(c.until)+"\n";
+    if(!c.peakTargets.empty()) {
+        std::string t;
+        for(auto& [n,b]:c.peakTargets) { if(!t.empty()) t+=','; t+=n+":"+std::to_string(b/MiB); }
+        text+="peak_targets="+t+"\n";
+    }
+    return text;
 }
 } // namespace ms

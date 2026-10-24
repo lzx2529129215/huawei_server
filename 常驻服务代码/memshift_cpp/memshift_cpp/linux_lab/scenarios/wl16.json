@@ -5,10 +5,10 @@
   "name": "wl16",
   "memory_max": 16384,
   "swap_max": 25600,
-  "zswap_max": 4096,
+  "zswap_max": 2048,
   "compress_ratio": 3.0,
   "scale": 1.0,
-  "calibration": "/home/boyi/HNUST/huawei_server/results/linux_oom_lab_wl16_20261019/calibration_apps.json",
+  "calibration": "/home/boyi/HNUST/huawei_server/results/linux_oom_lab_wl16_z2g_20261020/calibration_apps.json",
   "cases": 4,
   "group_size": 6,
   "target_ratio": 1.3,
@@ -25,7 +25,7 @@
  "scope": {
   "memory_max_mib": 16384,
   "swap_max_mib": 25600,
-  "zswap_max_mib": 4096
+  "zswap_max_mib": 2048
  },
  "duration_s": 450,
  "policy_kill": {

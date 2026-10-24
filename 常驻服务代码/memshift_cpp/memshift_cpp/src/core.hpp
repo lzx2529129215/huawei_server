@@ -169,6 +169,16 @@ struct Options {
     Bytes maxBoost = 4096*MiB;
     // Launch hints are capped at this share of memory minus reserve (default: half).
     double boostCapFraction = 0.5;
+    // linux-v2 scope mode only. "reclaim" (default) writes memory.reclaim as
+    // before; "high" uses free-memory watermarks and memory.high pulses
+    // (watermark.hpp). The options below apply to "high" only.
+    std::string reclaimInterface = "reclaim";
+    Bytes wmLow = 512*MiB, wmHigh = 1024*MiB, hintReserve = 512*MiB, hintGap = 256*MiB;
+    double floorRatio = 0.2, assumedCompressRatio = 3.0;
+    Bytes pulse = 256*MiB;
+    unsigned pulseTimeoutMs = 5000;
+    double pulseRateMBps = 0;   // most reclaim asked per second over all pulses; 0 = no limit
+    bool zswapQuota = false;
 };
 struct App {
     std::string name, path;
@@ -177,6 +187,8 @@ struct App {
     Bytes keep = 256*MiB;
     // WPS PC window-state exception; never inferred from a nonpositive OOM score.
     bool wpsWindowGate = false;
+    // "high" mode: higher = more expendable (the lab passes the app's oom_adj).
+    int priority = 0;
 };
 struct System {
     double time = 0;
@@ -194,6 +206,8 @@ struct Sample {
     Bytes dirty = 0, writeback = 0, unevictable = 0, swap = 0, swapRoom = 0;
     Bytes low = 0, min = 0, pgfault = 0, major = 0, refault = 0;
     Bytes pgsteal = 0, pgstealProactive = 0, oomKills = 0;
+    Bytes zswap = 0, zswapped = 0;   // memory.stat (0 without zswap)
+    Bytes highEvents = 0;            // memory.events high (throttled over memory.high)
     bool hasProactive = false, populated = false;
     PSI psi;
 };

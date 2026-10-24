@@ -1,0 +1,478 @@
+{
+ "name": "cgC_d50all",
+ "note": "场景 C：浏览器多标签 + 办公. Aligned peaks from WSL cgroup measurements (实验设置.md v2)",
+ "scope": {
+  "memory_max_mib": 16384,
+  "swap_max_mib": 25600,
+  "zswap_max_mib": 2048
+ },
+ "duration_s": 510,
+ "peak_plan": {
+  "T": 300,
+  "hold_s": 15,
+  "release_gap_s": 15,
+  "first_ramp_s": 221,
+  "return_start_s": 375,
+  "release_order": [
+   "wechat",
+   "chrome",
+   "edge",
+   "wps"
+  ],
+  "return_order": [
+   "feishu",
+   "dingtalk",
+   "thunderbird",
+   "gnote",
+   "rhythmbox",
+   "calendar",
+   "evolution"
+  ]
+ },
+ "policy_kill": {
+  "window_s": 1.0,
+  "cooldown_s": 1.0,
+  "levels": [
+   {
+    "some_ms": 200,
+    "min_adj": 800
+   },
+   {
+    "full_ms": 700,
+    "min_adj": 0
+   }
+  ]
+ },
+ "popup": {
+  "low_mib": 50,
+  "rearm_mib": 150,
+  "rearm_s": 3.0
+ },
+ "memshiftd": {
+  "reclaim_interface": "high",
+  "zswap_quota": "true",
+  "wm_low_mb": 512,
+  "wm_high_mb": 1024,
+  "hint_reserve_mb": 512,
+  "hint_gap_mb": 256,
+  "floor_ratio": 0.2,
+  "assumed_compress_ratio": 3.0,
+  "pulse_mb": 64,
+  "pulse_rate_mb_s": 256,
+  "pulse_timeout_ms": 5000,
+  "interval_ms": 500,
+  "startup_grace_sec": 5,
+  "backoff_sec": 10,
+  "max_boost_mb": 16384
+ },
+ "apps": [
+  {
+   "name": "chrome",
+   "role": "peak",
+   "measured_daily_mib": 1157,
+   "measured_split_mib": [
+    398,
+    567,
+    189
+   ],
+   "anon_mib": 398,
+   "locked_mib": 189,
+   "clean_mib": 283,
+   "dirty_mib": 284,
+   "dirty_rate_mib_s": 14.2,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 100,
+   "peak_op": "S06 多标签集中恢复（丢弃 9 个后逐个唤醒）",
+   "peak_mib": 3891,
+   "ramp_s": 76,
+   "peak_rate_mib_s": 51.197,
+   "peak_compress_ratio": 3.0,
+   "hold_s": 30,
+   "release_k": 1,
+   "peak_deadline_s": 91.2,
+   "cal_daily_mib": 1171,
+   "cal_peak_mib": 5070
+  },
+  {
+   "name": "edge",
+   "role": "peak",
+   "measured_daily_mib": 1040,
+   "measured_split_mib": [
+    323,
+    531,
+    184
+   ],
+   "anon_mib": 323,
+   "locked_mib": 184,
+   "clean_mib": 265,
+   "dirty_mib": 266,
+   "dirty_rate_mib_s": 13.3,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 100,
+   "peak_op": "S06 多标签集中恢复（丢弃 9 个后逐个唤醒）",
+   "peak_mib": 3676,
+   "ramp_s": 79,
+   "peak_rate_mib_s": 46.532,
+   "peak_compress_ratio": 3.0,
+   "hold_s": 45,
+   "release_k": 2,
+   "peak_deadline_s": 94.8,
+   "cal_daily_mib": 1054,
+   "cal_peak_mib": 4738
+  },
+  {
+   "name": "feishu",
+   "role": "background",
+   "measured_daily_mib": 2292,
+   "measured_split_mib": [
+    1115,
+    798,
+    377
+   ],
+   "anon_mib": 1115,
+   "locked_mib": 377,
+   "clean_mib": 399,
+   "dirty_mib": 399,
+   "dirty_rate_mib_s": 19.95,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 910,
+   "cal_daily_mib": 2315,
+   "cal_peak_mib": 2316
+  },
+  {
+   "name": "wechat",
+   "role": "peak",
+   "measured_daily_mib": 1056,
+   "measured_split_mib": [
+    360,
+    634,
+    59
+   ],
+   "anon_mib": 360,
+   "locked_mib": 59,
+   "clean_mib": 317,
+   "dirty_mib": 317,
+   "dirty_rate_mib_s": 15.85,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 100,
+   "peak_op": "S04 发图片到文件传输助手并看大图",
+   "peak_mib": 573,
+   "ramp_s": 19,
+   "peak_rate_mib_s": 30.158,
+   "peak_compress_ratio": 3.0,
+   "hold_s": 15,
+   "release_k": 0,
+   "peak_deadline_s": 24.0,
+   "cal_daily_mib": 1072,
+   "cal_peak_mib": 1646
+  },
+  {
+   "name": "dingtalk",
+   "role": "background",
+   "measured_daily_mib": 773,
+   "measured_split_mib": [
+    212,
+    514,
+    44
+   ],
+   "anon_mib": 212,
+   "locked_mib": 44,
+   "clean_mib": 257,
+   "dirty_mib": 257,
+   "dirty_rate_mib_s": 12.85,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 920,
+   "cal_daily_mib": 785,
+   "cal_peak_mib": 786
+  },
+  {
+   "name": "wps",
+   "role": "peak",
+   "measured_daily_mib": 1098,
+   "measured_split_mib": [
+    296,
+    722,
+    77
+   ],
+   "anon_mib": 296,
+   "locked_mib": 77,
+   "clean_mib": 361,
+   "dirty_mib": 361,
+   "dirty_rate_mib_s": 18.05,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 100,
+   "peak_op": "S06 大文档导出 PDF",
+   "peak_mib": 1408,
+   "ramp_s": 20,
+   "peak_rate_mib_s": 70.4,
+   "peak_compress_ratio": 3.0,
+   "hold_s": 60,
+   "release_k": 3,
+   "peak_deadline_s": 25.0,
+   "cal_daily_mib": 1116,
+   "cal_peak_mib": 2527
+  },
+  {
+   "name": "thunderbird",
+   "role": "background",
+   "measured_daily_mib": 1477,
+   "measured_split_mib": [
+    465,
+    930,
+    78
+   ],
+   "anon_mib": 465,
+   "locked_mib": 78,
+   "clean_mib": 465,
+   "dirty_mib": 465,
+   "dirty_rate_mib_s": 23.25,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 930,
+   "cal_daily_mib": 1500,
+   "cal_peak_mib": 1501
+  },
+  {
+   "name": "gnote",
+   "role": "background",
+   "measured_daily_mib": 575,
+   "measured_split_mib": [
+    364,
+    173,
+    35
+   ],
+   "anon_mib": 364,
+   "locked_mib": 35,
+   "clean_mib": 87,
+   "dirty_mib": 86,
+   "dirty_rate_mib_s": 4.3,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 960,
+   "cal_daily_mib": 578,
+   "cal_peak_mib": 579
+  },
+  {
+   "name": "rhythmbox",
+   "role": "background",
+   "measured_daily_mib": 182,
+   "measured_split_mib": [
+    66,
+    113,
+    2
+   ],
+   "anon_mib": 66,
+   "locked_mib": 2,
+   "clean_mib": 57,
+   "dirty_mib": 56,
+   "dirty_rate_mib_s": 2.8,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 200,
+   "cal_daily_mib": 185,
+   "cal_peak_mib": 186
+  },
+  {
+   "name": "calendar",
+   "role": "background",
+   "measured_daily_mib": 643,
+   "measured_split_mib": [
+    367,
+    237,
+    36
+   ],
+   "anon_mib": 367,
+   "locked_mib": 36,
+   "clean_mib": 119,
+   "dirty_mib": 118,
+   "dirty_rate_mib_s": 5.9,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 950,
+   "cal_daily_mib": 648,
+   "cal_peak_mib": 649
+  },
+  {
+   "name": "evolution",
+   "role": "background",
+   "measured_daily_mib": 192,
+   "measured_split_mib": [
+    141,
+    26,
+    21
+   ],
+   "anon_mib": 141,
+   "locked_mib": 21,
+   "clean_mib": 13,
+   "dirty_mib": 13,
+   "dirty_rate_mib_s": 0.65,
+   "compress_ratio": 3.0,
+   "touch_file": 1,
+   "oom_adj": 940,
+   "cal_daily_mib": 190,
+   "cal_peak_mib": 191
+  }
+ ],
+ "timeline": [
+  {
+   "t": 0,
+   "op": "launch",
+   "apps": [
+    "chrome"
+   ]
+  },
+  {
+   "t": 3,
+   "op": "launch",
+   "apps": [
+    "edge"
+   ]
+  },
+  {
+   "t": 6,
+   "op": "launch",
+   "apps": [
+    "feishu"
+   ]
+  },
+  {
+   "t": 9,
+   "op": "launch",
+   "apps": [
+    "wechat"
+   ]
+  },
+  {
+   "t": 12,
+   "op": "launch",
+   "apps": [
+    "dingtalk"
+   ]
+  },
+  {
+   "t": 15,
+   "op": "launch",
+   "apps": [
+    "wps"
+   ]
+  },
+  {
+   "t": 18,
+   "op": "launch",
+   "apps": [
+    "thunderbird"
+   ]
+  },
+  {
+   "t": 21,
+   "op": "launch",
+   "apps": [
+    "gnote"
+   ]
+  },
+  {
+   "t": 24,
+   "op": "launch",
+   "apps": [
+    "rhythmbox"
+   ]
+  },
+  {
+   "t": 27,
+   "op": "launch",
+   "apps": [
+    "calendar"
+   ]
+  },
+  {
+   "t": 30,
+   "op": "launch",
+   "apps": [
+    "evolution"
+   ]
+  },
+  {
+   "t": 221,
+   "op": "peak",
+   "apps": [
+    "edge"
+   ]
+  },
+  {
+   "t": 224,
+   "op": "peak",
+   "apps": [
+    "chrome"
+   ]
+  },
+  {
+   "t": 280,
+   "op": "peak",
+   "apps": [
+    "wps"
+   ]
+  },
+  {
+   "t": 281,
+   "op": "peak",
+   "apps": [
+    "wechat"
+   ]
+  },
+  {
+   "t": 375,
+   "op": "return",
+   "apps": [
+    "feishu"
+   ]
+  },
+  {
+   "t": 390,
+   "op": "return",
+   "apps": [
+    "dingtalk"
+   ]
+  },
+  {
+   "t": 405,
+   "op": "return",
+   "apps": [
+    "thunderbird"
+   ]
+  },
+  {
+   "t": 420,
+   "op": "return",
+   "apps": [
+    "gnote"
+   ]
+  },
+  {
+   "t": 435,
+   "op": "return",
+   "apps": [
+    "rhythmbox"
+   ]
+  },
+  {
+   "t": 450,
+   "op": "return",
+   "apps": [
+    "calendar"
+   ]
+  },
+  {
+   "t": 465,
+   "op": "return",
+   "apps": [
+    "evolution"
+   ]
+  }
+ ]
+}
