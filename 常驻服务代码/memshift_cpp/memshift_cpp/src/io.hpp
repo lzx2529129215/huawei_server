@@ -287,6 +287,19 @@ inline Configuration parseConfig(const std::string& text) {
         else if(k=="pulse_timeout_ms") { auto n=uintValue(v); if(n<100 || n>60000) throw std::runtime_error("pulse_timeout_ms: 100..60000"); o.pulseTimeoutMs=static_cast<unsigned>(n); }
         else if(k=="zswap_quota") o.zswapQuota=boolValue(v);
         else if(k=="pulse_rate_mb_s") { o.pulseRateMBps=realValue(v); if(o.pulseRateMBps<0 || o.pulseRateMBps>100000) throw std::runtime_error("pulse_rate_mb_s: 0..100000"); }
+        else if(k=="tmo") o.tmo=boolValue(v);
+        else if(k=="tmo_interval_ms") { auto n=uintValue(v); if(n<500 || n>60000) throw std::runtime_error("tmo_interval_ms: 500..60000"); o.tmoIntervalMs=static_cast<unsigned>(n); }
+        else if(k=="tmo_ratio") { o.tmoRatio=realValue(v); if(!(o.tmoRatio>0 && o.tmoRatio<=0.5)) throw std::runtime_error("tmo_ratio: (0,0.5]"); }
+        else if(k=="tmo_min_step_mb") { auto n=uintValue(v); if(n<1 || n>64) throw std::runtime_error("tmo_min_step_mb: 1..64"); o.tmoMinStep=n*MiB; }
+        else if(k=="tmo_psi_target_us") { o.tmoPsiTargetUs=realValue(v); if(!(o.tmoPsiTargetUs>=1 && o.tmoPsiTargetUs<=1e7)) throw std::runtime_error("tmo_psi_target_us: 1..10000000"); }
+        else if(k=="tmo_backoff_sec") { o.tmoBackoffSec=realValue(v); if(!(o.tmoBackoffSec>=1 && o.tmoBackoffSec<=600)) throw std::runtime_error("tmo_backoff_sec: 1..600"); }
+        else if(k=="hint_mode") { if(v!="watermark" && v!="rate") throw std::runtime_error("hint_mode: watermark/rate"); o.hintMode=v; }
+        else if(k=="hint_stop_sec") { o.hintStopSec=realValue(v); if(!(o.hintStopSec>=0 && o.hintStopSec<=60)) throw std::runtime_error("hint_stop_sec: 0..60"); }
+        else if(k=="brake_some_ms") { o.brakeSomeMs=realValue(v); if(!(o.brakeSomeMs>=0 && o.brakeSomeMs<=1000)) throw std::runtime_error("brake_some_ms: 0..1000 (0 = off)"); }
+        // resume must be > 0: a 1-s stall window is never below 0, the brake would never release.
+        else if(k=="brake_resume_ms") { o.brakeResumeMs=realValue(v); if(!(o.brakeResumeMs>0 && o.brakeResumeMs<=1000)) throw std::runtime_error("brake_resume_ms: (0,1000]"); }
+        else if(k=="brake_pulse_ms") { o.brakePulseMs=realValue(v); if(!(o.brakePulseMs>=0 && o.brakePulseMs<=1000)) throw std::runtime_error("brake_pulse_ms: 0..1000"); }
+        else if(k=="brake_resume_sec") { o.brakeResumeSec=realValue(v); if(!(o.brakeResumeSec>=0 && o.brakeResumeSec<=60)) throw std::runtime_error("brake_resume_sec: 0..60"); }
         else throw std::runtime_error("unknown daemon key: " + k);
     };
     while (std::getline(in,line)) {
@@ -343,8 +356,13 @@ inline Configuration parseConfig(const std::string& text) {
         check(std::isfinite(o.assumedCompressRatio) && o.assumedCompressRatio>=1 && o.assumedCompressRatio<=20,
               "assumed_compress_ratio: 1..20");
         check(o.pulse>=o.minBatch && o.pulse<=1024*MiB,"pulse_mb: min_batch_mb..1024");
+        check((!o.tmo && o.hintMode!="rate") || o.tmoMinStep<=o.pulse,"tmo_min_step_mb must not exceed pulse_mb");
+        check(o.brakeSomeMs==0 || o.brakeResumeMs<=o.brakeSomeMs,"brake_resume_ms must not exceed brake_some_ms");
     }
     check(!o.zswapQuota || o.reclaimInterface=="high","zswap_quota requires reclaim_interface=high");
+    check(!o.tmo || o.reclaimInterface=="high","tmo requires reclaim_interface=high");
+    check(o.hintMode=="watermark" || o.reclaimInterface=="high","hint_mode=rate requires reclaim_interface=high");
+    check(o.brakeSomeMs==0 || o.reclaimInterface=="high","brake_some_ms requires reclaim_interface=high");
     if(o.oracleMode) {
         check(!o.oracleSchedule.empty() && !o.oracleLedger.empty(),"oracle mode requires separate schedule and ledger files");
         check(o.oracleBatch>=MiB && o.oracleGlobalCap>=o.oracleBatch && o.oracleCaseCap>=o.oracleBatch && o.oracleAppCap>=o.oracleBatch,"invalid oracle independent caps");
@@ -460,6 +478,8 @@ struct Control {
     // Optional, "high" mode: size each peak app will reach at its peak (bytes),
     // valid until boost_until_unix together with the boost.
     std::map<std::string,Bytes> peakTargets;
+    // Optional, "high" mode: unix seconds of the hinted peak (0 = unknown).
+    Bytes peakAt=0;
 };
 // "name:MiB,name:MiB" (empty = none).
 inline std::map<std::string,Bytes> parsePeakTargets(const std::string& v) {
@@ -489,9 +509,10 @@ inline Control parseControl(const std::string& text) {
         } else if(k=="reserve_extra_mb") c.boost=mbValue(v);
         else if(k=="boost_until_unix") c.until=uintValue(v);
         else if(k=="peak_targets") c.peakTargets=parsePeakTargets(v);
+        else if(k=="peak_at_unix") c.peakAt=uintValue(v);
         else throw std::runtime_error("unknown control key: "+k);
     }
-    if(seen.size()-seen.count("peak_targets")!=4) throw std::runtime_error("control file must contain all four keys");
+    if(seen.size()-seen.count("peak_targets")-seen.count("peak_at_unix")!=4) throw std::runtime_error("control file must contain all four keys");
     return c;
 }
 inline std::string controlText(const Control& c) {
@@ -503,6 +524,34 @@ inline std::string controlText(const Control& c) {
         for(auto& [n,b]:c.peakTargets) { if(!t.empty()) t+=','; t+=n+":"+std::to_string(b/MiB); }
         text+="peak_targets="+t+"\n";
     }
+    if(c.peakAt) text+="peak_at_unix="+std::to_string(c.peakAt)+"\n";
     return text;
+}
+// memshiftctl hint rule. Peak targets and the peak time share the boost's
+// expiry, so they are accepted only with a boost; a new boost replaces both
+// (absent = cleared) and clearing the boost (0) clears them too.
+struct HintUpdate {
+    std::optional<Bytes> boost;          // bytes; 0 clears the hint
+    Bytes ttl=30;                        // seconds
+    std::optional<std::string> targets;  // "name:MiB,..." or "none"
+    std::optional<Bytes> peakAt;         // unix seconds; 0 = unknown
+};
+inline void applyHint(Control& c,const HintUpdate& h,Bytes now) {
+    if(h.targets && !h.boost) throw std::runtime_error("--peak-targets needs --boost-mb (they share one expiry)");
+    if(h.peakAt && !h.boost) throw std::runtime_error("--peak-at-unix needs --boost-mb (they share one expiry)");
+    if(!h.boost) return;
+    c.boost=*h.boost; c.until=*h.boost?add(now,h.ttl):0;
+    c.peakTargets=(h.targets && *h.targets!="none" && *h.boost)?parsePeakTargets(*h.targets):std::map<std::string,Bytes>{};
+    c.peakAt=(h.peakAt && *h.boost)?*h.peakAt:0;
+}
+// Unix seconds for --peak-at-unix: an integer, or a decimal rounded to the
+// nearest second (callers often compute the time as a float).
+inline Bytes unixTimeValue(const std::string& s) {
+    if(s.empty() || s.find_first_not_of("0123456789.")!=std::string::npos || s.find('.')!=s.rfind('.') || s.front()=='.' || s.back()=='.')
+        throw std::runtime_error("expected unix seconds: "+s);
+    const auto dot=s.find('.');
+    Bytes v=uintValue(s.substr(0,dot));
+    if(dot!=std::string::npos && s[dot+1]>='5') v=add(v,1);
+    return v;
 }
 } // namespace ms

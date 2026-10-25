@@ -179,6 +179,26 @@ struct Options {
     unsigned pulseTimeoutMs = 5000;
     double pulseRateMBps = 0;   // most reclaim asked per second over all pulses; 0 = no limit
     bool zswapQuota = false;
+    // "high" only, all off by default. TMO loop: every tmo_interval_ms each
+    // eligible app gets one small pulse sized by its own memory PSI (Senpai-like).
+    bool tmo = false;
+    unsigned tmoIntervalMs = 2000;
+    double tmoRatio = 0.02;
+    Bytes tmoMinStep = 2*MiB;          // smallest TMO / rate pulse
+    double tmoPsiTargetUs = 2000;      // app PSI some per interval that pauses it
+    double tmoBackoffSec = 10;
+    // "watermark": a hint raises the watermarks (default). "rate": a hint with
+    // peak_at_unix tops reclaim up at a steady rate until hint_stop_sec before the peak.
+    std::string hintMode = "watermark";
+    double hintStopSec = 5;
+    // Brake: no pulses while the scope's PSI some over the last 1 s >= brake_some_ms
+    // (0 = off); released after brake_resume_sec below brake_resume_ms.
+    double brakeSomeMs = 0, brakeResumeMs = 15, brakeResumeSec = 2;
+    // Worker-side brake (0 = off): before every pulse after a job's first, re-read the scope's
+    // memory.pressure; if its some total grew by >= brake_pulse_ms since the previous pulse of the
+    // job, end the job (status cancelled_brake_pulse). Stops a pulse series as soon as it stalls the
+    // apps, before the 1-s window of the main loop's brake can build up.
+    double brakePulseMs = 0;
 };
 struct App {
     std::string name, path;

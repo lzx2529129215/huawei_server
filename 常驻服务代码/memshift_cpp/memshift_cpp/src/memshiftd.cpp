@@ -243,6 +243,7 @@ struct PulseJob {
     FD dir;
     Bytes want=0;        // net drop of memory.current asked for
     Bytes floorBytes=0;  // anon (minus locked) + file must stay at or above this
+    Bytes minPulse=0;    // smallest pulse worth writing; 0 = min_batch_mb (tmo/hint_rate: tmo_min_step_mb)
 };
 struct PulseResult {
     std::size_t index=0;
@@ -266,6 +267,7 @@ class PulseWorker {
     std::optional<PulseResult> completed_;
     bool stop_=false,running_=false;
     std::atomic<bool> cancel_{false},slowCancel_{false};
+    std::atomic<bool> brake_{false};   // set by the main loop while the brake is on
     std::atomic<double> pulseStart_{0};
     double nextPulse_=0;   // monotonic time the next pulse may start (pulse_rate_mb_s)
     double cancelSentFor_=0;
@@ -306,6 +308,17 @@ class PulseWorker {
         if(restoreErr) { p.restored=false; p.message+="restore failed: "+std::string(std::strerror(restoreErr)); }
         return p;
     }
+    // Fresh control check before a pulse: why the app may not be pulsed now, if
+    // anything. An unreadable control file stops the job too.
+    std::optional<std::string> blocked(const PulseJob& j) {
+        try {
+            auto ctl=controlNow(o_);
+            if(ctl.paused) return std::string("paused");
+            if(ctl.protectedApps.count(j.name)) return std::string("app protected");
+            if(isOwnTarget(o_,j.path)) return std::string("own target");
+        } catch(const std::exception& e) { return "control: "+std::string(e.what()); }
+        return std::nullopt;
+    }
     PulseResult execute(PulseJob j) {
         PulseResult r; r.index=j.index; r.name=j.name; r.path=j.path; r.reason=j.reason; r.want=j.want;
         const double begin=monotonic();
@@ -315,21 +328,44 @@ class PulseWorker {
             r.currentBefore=currentOf(j.dir.get()); r.swapBefore=swapOf(j.dir.get());
             r.currentAfter=r.currentBefore; r.swapAfter=r.swapBefore;
             r.status="ok";
+            const Bytes minPulse=j.minPulse?j.minPulse:o_.minBatch;
+            std::optional<Bytes> lastScopeSome;   // brake_pulse_ms: scope some total before the previous pulse
             while(r.freed<j.want) {
-                if(cancel_) { r.status=slowCancel_?"cancelled_slow":(r.pulses.empty()?"cancelled":"stopped"); break; }
+                if(cancel_ || brake_) {
+                    r.status=slowCancel_?"cancelled_slow":(brake_?"cancelled_brake":(r.pulses.empty()?"cancelled":"stopped"));
+                    break;
+                }
                 auto stat=counters(readAt(j.dir.get(),"memory.stat"));
                 const Bytes resident=add(sub(get(stat,"anon"),get(stat,"unevictable")),get(stat,"file"));
                 Bytes n=std::min(pulseLimit(o_,sub(resident,j.floorBytes),page_),sub(j.want,r.freed));
                 n-=n%page_;
-                if(n<o_.minBatch) { r.status=r.pulses.empty()?"at_floor":"floor_reached"; break; }
+                if(n<minPulse) { r.status=r.pulses.empty()?"at_floor":"floor_reached"; break; }
                 // Pace reclaim like a background thread: while a pulse runs, a donor that faults
                 // a page in is made to reclaim too, so bursts of pulses add up to visible stall.
-                if(o_.pulseRateMBps>0) {
-                    while(!cancel_ && monotonic()<nextPulse_)
+                if(o_.pulseRateMBps>0)
+                    while(!cancel_ && !brake_ && monotonic()<nextPulse_)
                         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                    if(cancel_) continue;
-                    nextPulse_=std::max(nextPulse_,monotonic())+static_cast<double>(n)/MiB/o_.pulseRateMBps;
+                if(cancel_ || brake_) continue;
+                // The runner protects an app right before its peak, possibly while a job on it
+                // runs: re-read the control file before every pulse.
+                if(auto why=blocked(j)) { r.status="cancelled_protected"; r.message=*why; break; }
+                if(o_.brakePulseMs>0 && !o_.scope.empty()) {
+                    // Fresh scope stall right before the pulse: the previous pulse of this job
+                    // stalled the apps (refaults / memory.high throttling) -> stop the series.
+                    std::optional<Bytes> some;
+                    try {
+                        const auto psi=parsePSI(readPath(o_.root+"/"+o_.scope+"/memory.pressure"));
+                        if(psi.valid) some=psi.someTotal;
+                    } catch(const std::exception&) {}
+                    if(some && lastScopeSome && sub(*some,*lastScopeSome)>=amount(o_.brakePulseMs*1000.0)) {
+                        r.status="cancelled_brake_pulse";
+                        r.message="scope stall +"+std::to_string(sub(*some,*lastScopeSome)/1000)+" ms since the previous pulse";
+                        break;
+                    }
+                    if(some) lastScopeSome=some;
                 }
+                if(o_.pulseRateMBps>0)
+                    nextPulse_=std::max(nextPulse_,monotonic())+static_cast<double>(n)/MiB/o_.pulseRateMBps;
                 auto p=pulse(j,n,std::move(stat));
                 // A donor killed or exiting during the pulse frees its memory by exiting, not by
                 // reclaim: count nothing for that pulse and end the job.
@@ -349,7 +385,7 @@ class PulseWorker {
                 if(failed) { r.status=p.status; r.message=p.message; if(!gone) r.err=EIO; }
                 r.pulses.push_back(std::move(p));
                 if(failed || !restored) { if(!restored) r.status="restore_failed"; break; }
-                if(got<o_.minBatch/2) { r.status="no_progress"; break; }
+                if(got<minPulse/2) { r.status="no_progress"; break; }
             }
         } catch(const std::exception& e) {
             // Reading the donor failed between pulses (most likely it was killed); what was
@@ -389,6 +425,8 @@ public:
     }
     // Ends the job after the pulse in flight. slow: that pulse ran past pulse_timeout_ms.
     void cancel(bool slow=false) { if(slow) slowCancel_=true; cancel_=true; }
+    // While on, every job stops before its next pulse (status cancelled_brake).
+    void setBrake(bool on) { brake_=on; }
     // Path of the pulse in flight if it has run longer than limit seconds;
     // reported once per pulse.
     std::optional<std::string> slowPulse(double limit) {
@@ -403,17 +441,29 @@ struct HighState {
     double firstSeen=0,backoffUntil=0;
     Bytes reference=0;   // largest anon (minus locked) + file seen
     bool disabled=false;
+    TmoApp tmo;          // TMO loop (tmo / hint_mode=rate)
+    Bytes maxCurrent=0;  // largest memory.current seen for this cgroup (rate mode need)
+    Bytes seenFor=0;     // boost_until_unix of the hint during which it was last seen alive
 };
 using EventFn=std::function<void(const std::string&,const std::string&,const std::string&)>;
 int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& event) {
     const auto& o=cfg.options;
     const fs::path logs(o.logs);
+    const bool rateMode=o.hintMode=="rate";
+    const bool tmoTrack=o.tmo || rateMode;      // per-app PSI loop (rate donors use its backoff)
+    const bool extra=tmoTrack || o.brakeSomeMs>0;
+    const double tmoInterval=o.tmoIntervalMs/1000.0, tickSec=o.intervalMs/1000.0;
+    // New columns only with the new options, so existing configs log exactly as before.
     CSV systemLog(logs/"system.csv",
         "unix_ms,mode,mem_total,scope_free,mem_available,swap_free,zswap,zswapped,mem_some_pct,mem_full_pct,io_some_pct,pswpin,pswpout,"
-        "hinted,boost_bytes,remaining_peak_bytes,wm_low,wm_high,reclaiming,decision,target,planned_bytes",o.logMax);
+        "hinted,boost_bytes,remaining_peak_bytes,wm_low,wm_high,reclaiming,decision,target,planned_bytes"+
+        std::string(extra?",job_reason,brake,brake_window_ms,peak_at_unix,rate_need_bytes,rate_left_s,tmo_due":""),o.logMax);
     CSV appLog(logs/"apps.csv",
         "unix_ms,app,cgroup_inode,current_bytes,anon_bytes,unevictable_bytes,file_bytes,swap_bytes,zswap_bytes,zswapped_bytes,"
-        "refault,oom_kill,resident_bytes,reference_bytes,floor_bytes,room_bytes,high_events,psi_some_total_us,psi_full_total_us,reason",o.logMax);
+        "refault,oom_kill,resident_bytes,reference_bytes,floor_bytes,room_bytes,high_events,psi_some_total_us,psi_full_total_us,reason"+
+        std::string(tmoTrack?",tmo_psi_us,tmo_state":""),o.logMax);
+    std::optional<CSV> brakeLog;
+    if(o.brakeSomeMs>0) brakeLog.emplace(logs/"brake.csv","unix_ms,state,window_ms",o.logMax);
     // One row per pulse job, same columns as the memory.reclaim mode (run_round.py reads them).
     CSV reclaimLog(logs/"reclaim.csv",
         "unix_ms,app,status,trigger,planned_bytes,submitted_bytes,errno,write_ms,total_ms,current_before,current_after,current_change,swap_change,pgsteal_delta,pgsteal_proactive_delta,mem_available_change,mem_free_change,message",o.logMax);
@@ -429,7 +479,18 @@ int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& ev
     event("INFO","daemon","reclaim_interface=high: watermarks "+u(o.wmLow/MiB)+"/"+u(o.wmHigh/MiB)+" MiB, hint reserve "+
           u(o.hintReserve/MiB)+" MiB, floor "+num(o.floorRatio)+", pulse "+u(o.pulse/MiB)+" MiB, rate limit "+
           (o.pulseRateMBps>0?num(o.pulseRateMBps)+" MiB/s":std::string("none"))+", zswap_quota="+(o.zswapQuota?"true":"false"));
+    if(extra)
+        event("INFO","daemon","tmo="+std::string(o.tmo?"true":"false")+" (every "+u(o.tmoIntervalMs)+" ms, ratio "+num(o.tmoRatio)+
+              ", min step "+u(o.tmoMinStep/MiB)+" MiB, PSI target "+num(o.tmoPsiTargetUs)+" us, backoff "+num(o.tmoBackoffSec)+
+              " s), hint_mode="+o.hintMode+" (stop "+num(o.hintStopSec)+" s before the peak), brake "+
+              (o.brakeSomeMs>0?num(o.brakeSomeMs)+"/"+num(o.brakeResumeMs)+" ms some per 1 s, resume after "+num(o.brakeResumeSec)+" s":std::string("off")));
     PulseWorker worker(o,page);
+    std::optional<Brake> brake;
+    if(o.brakeSomeMs>0) brake.emplace(o);
+    bool brakePsiWarned=false;
+    std::string inflight;             // reason of the job the worker holds ("" = none)
+    Bytes rateWarnedFor=0;            // boost_until_unix of a rate hint reported without peak_at_unix
+    double lastRateAt=0;              // monotonic time of the last accepted rate top-up job (0 = inactive)
     std::vector<HighState> states(cfg.apps.size());
     std::map<std::string,std::size_t> index;
     for(std::size_t i=0;i<cfg.apps.size();++i) index[cfg.apps[i].name]=i;
@@ -460,7 +521,9 @@ int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& ev
                           u(p.swapBefore),u(p.swapAfter),d("zswpout"),d("zswpwb"),d("pswpout"),p.message});
         }
         const bool any=!r.pulses.empty();
-        static const std::set<std::string> success{"ok","floor_reached","no_progress","stopped","cancelled_slow","target_gone"};
+        // A job stopped after pulses that freed memory counts as done (exact status in message).
+        static const std::set<std::string> success{"ok","floor_reached","no_progress","stopped","cancelled_slow","target_gone",
+                                                   "cancelled_brake","cancelled_brake_pulse","cancelled_protected"};
         reclaimLog.row({u(unixMillis()),r.name,any&&r.freed&&success.count(r.status)?"ok":r.status,r.reason,u(r.want),u(r.requested),std::to_string(r.err),
                         num(r.writeMs),num(r.totalMs),any?u(r.currentBefore):"",any?u(r.currentAfter):"",
                         any?num(static_cast<double>(r.currentAfter)-static_cast<double>(r.currentBefore)):"",
@@ -472,8 +535,9 @@ int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& ev
         ++tick;
         if(auto r=worker.take()) {
             logResult(*r);
+            inflight.clear();
             auto& st=states.at(r->index);
-            if(r->status=="no_progress" || r->status=="cancelled_slow") st.backoffUntil=monotonic()+o.backoffSec;
+            if(r->status=="no_progress" || r->status=="cancelled_slow" || r->status=="cancelled_brake_pulse") st.backoffUntil=monotonic()+o.backoffSec;
             if(r->status=="open_error" || r->status=="write_error" || r->status=="restore_failed") {
                 st.disabled=true;
                 event("ERROR",r->name,"high pulses disabled for this app: "+r->status+" "+r->message);
@@ -487,6 +551,22 @@ int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& ev
         System s;
         try { s=machineSample(o,root); }
         catch(const std::exception& e) { event("ERROR","system",e.what()); samplingFailed=true; break; }
+        // Brake on the scope's own stall; the worker checks the flag before every pulse.
+        bool brakeOn=false;
+        if(brake) {
+            if(s.mem.valid) {
+                const bool was=brake->on();
+                brakeOn=brake->update(s.time,s.mem.someTotal);
+                if(brakeOn!=was) {
+                    brakeLog->row({u(unixMillis()),brakeOn?"on":"off",num(brake->windowMs())});
+                    event(brakeOn?"WARN":"INFO","brake",std::string(brakeOn?"on":"off")+": scope PSI some "+num(brake->windowMs())+" ms over the last 1 s");
+                }
+            } else {
+                brakeOn=brake->on();
+                if(!brakePsiWarned) { brakePsiWarned=true; event("WARN","brake","scope memory.pressure unreadable; brake state frozen"); }
+            }
+            worker.setBrake(brakeOn);
+        }
         Control ctl; std::string block;
         try {
             ctl=controlNow(o);
@@ -528,17 +608,54 @@ int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& ev
                 event("INFO",app.name,"new/restarted cgroup");
             }
             st.reference=std::max(st.reference,residentOf(cur[i]));
+            st.maxCurrent=std::max(st.maxCurrent,cur[i].current);
+            if(hinted) st.seenFor=ctl.until;
             st.previous=cur[i];
             currents[app.name]=cur[i].current;
+            if(tmoTrack) {
+                if(cur[i].psi.valid) st.tmo.psi.add(s.time,cur[i].psi.someTotal,tmoInterval);
+                else st.tmo.psi.reset();
+            }
         }
         const Bytes remaining=!hinted?0:(ctl.peakTargets.empty()?ctl.boost:remainingPeak(ctl.peakTargets,currents));
-        auto wm=watermarks(o,hinted,remaining);
-        wm.high=std::min(wm.high,s.total); wm.low=std::min(wm.low,wm.high);
+        auto wmHint=watermarks(o,hinted,remaining);
+        wmHint.high=std::min(wmHint.high,s.total); wmHint.low=std::min(wmHint.low,wmHint.high);
+        // Rate mode: the hint never raises the watermarks; the low-watermark fallback keeps the normal pair.
+        auto wm=wmHint;
+        if(rateMode) { wm=watermarks(o,false,0); wm.high=std::min(wm.high,s.total); wm.low=std::min(wm.low,wm.high); }
+        // Rate top-up: active from the hint until hint_stop_sec before peak_at_unix.
+        const double rateLeftSec=hinted && ctl.peakAt?rateLeft(o,static_cast<double>(ctl.peakAt),static_cast<double>(unixMillis())/1000.0):0;
+        const bool rateActive=rateMode && hinted && ctl.peakAt>0 && rateLeftSec>0;
+        // Rate mode: the need is computed from the whole hint (apps not started yet count in full)
+        // and per-app high-water marks, so it equals the case's deficit at the hint and falls 1:1
+        // with reclaim (remainingPeak() counts only live apps at their live size).
+        Bytes rateRemaining=0;
+        if(rateActive) {
+            if(ctl.peakTargets.empty()) rateRemaining=ctl.boost;
+            else {
+                std::vector<HintApp> hv;
+                for(const auto& [n,b]:ctl.peakTargets) {
+                    const auto& st=states.at(index.at(n));
+                    const bool seen=st.seenFor==ctl.until;
+                    hv.push_back({b,seen,seen && cur[index.at(n)].valid,st.maxCurrent});
+                }
+                rateRemaining=hintRemaining(hv);
+            }
+        }
+        const Bytes need=rateActive?rateNeedHint(o,rateRemaining,s.free):0;
+        if(!rateActive || !need) lastRateAt=0;
+        if(rateMode && hinted && !ctl.peakAt && rateWarnedFor!=ctl.until) {
+            rateWarnedFor=ctl.until; event("WARN","policy","hint_mode=rate: hint without peak_at_unix, no rate top-up");
+        }
         if(!reclaiming && s.free<wm.low) { reclaiming=true; event("INFO","policy","free "+u(s.free/MiB)+" MiB below low watermark "+u(wm.low/MiB)+" MiB; reclaim until "+u(wm.high/MiB)+" MiB"); }
         else if(reclaiming && s.free>=wm.high) { reclaiming=false; event("INFO","policy","free "+u(s.free/MiB)+" MiB reached high watermark "+u(wm.high/MiB)+" MiB"); }
-        // The worker re-reads nothing between pulses except the donor; stop its job here once
-        // free is back at the high watermark or pulses are blocked.
-        if(worker.busy() && (!reclaiming || !block.empty())) worker.cancel();
+        // The worker re-reads only the donor and the control file between pulses; stop its job
+        // here when pulses are blocked or braked, a watermark job once free is back at the high
+        // watermark, a rate job once the top-up has stopped. TMO jobs are one small step.
+        if(worker.busy()) {
+            const bool watermarkJob=inflight!="tmo" && inflight!="hint_rate";
+            if(!block.empty() || brakeOn || (watermarkJob && !reclaiming) || (inflight=="hint_rate" && !need)) worker.cancel();
+        }
         // Donor view: background apps that may give memory now.
         auto eligible=[&](std::size_t i,std::string& why)->bool{
             const auto& app=cfg.apps[i]; const auto& st=states[i];
@@ -559,7 +676,7 @@ int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& ev
                 if(!eligible(i,why) && why!="backoff") continue;
                 donors.push_back({cfg.apps[i].name,cfg.apps[i].priority,sub(cur[i].anon,cur[i].unevictable),cur[i].file,states[i].reference});
             }
-            const auto plan=planZswapQuotas(o,donors,sub(wm.high,s.free),page);
+            const auto plan=planZswapQuotas(o,donors,sub(wmHint.high,s.free),page);
             quotaLog.row({u(unixMillis()),"*","plan","","",u(plan.need),u(plan.zswapCapacity),u(plan.diskCapacity),u(plan.deficit),
                           u(plan.diskAnon),u(plan.unplaced),plan.quota.empty()?"no quota needed":u(plan.quota.size())+" apps"});
             for(const auto& [name,q]:plan.quota) {
@@ -575,42 +692,99 @@ int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& ev
                   " MiB, anon to disk "+u(plan.diskAnon/MiB)+" MiB in "+u(plan.quota.size())+" apps");
         }
         if(!hinted && !quotaSet.empty()) restoreQuotas("hint ended");
-        // Most expendable eligible donor with room above its floor.
+        // Most expendable eligible donor with room above its floor; TMO evaluation per app.
         std::optional<std::size_t> best;
+        std::vector<Bytes> floors(cfg.apps.size(),0),rooms(cfg.apps.size(),0);
+        std::vector<RateDonor> rateDonors;
+        std::size_t tmoDue=0;
         for(std::size_t i=0;i<cfg.apps.size();++i) {
-            const auto& app=cfg.apps[i]; const auto& st=states[i];
+            const auto& app=cfg.apps[i]; auto& st=states[i];
             std::string why="eligible";
             Bytes floorBytes=0,room=0;
             if(cur[i].valid) { floorBytes=amount(o.floorRatio*static_cast<double>(st.reference)); room=sub(residentOf(cur[i]),floorBytes); }
-            if(eligible(i,why)) {
+            floors[i]=floorBytes; rooms[i]=room;
+            const bool ok=eligible(i,why);
+            if(ok) {
                 if(pulseLimit(o,room,page)<o.minBatch) why="at_floor";
                 else if(!best || app.priority>cfg.apps[*best].priority) best=i;
             }
-            if(cur[i].valid)
-                appLog.row({u(unixMillis()),app.name,u(cur[i].inode),u(cur[i].current),u(cur[i].anon),u(cur[i].unevictable),u(cur[i].file),
+            std::string tmoState;
+            Bytes tmoPsi=0;
+            if(tmoTrack && cur[i].valid) {
+                // An app without readable PSI gets no feedback, so no TMO or rate pulses.
+                const bool psiOk=cur[i].psi.valid;
+                tmoEvaluate(o,st.tmo,s.time,ok && psiOk,room,page);
+                const bool backoff=s.time<st.tmo.backoffUntil;
+                tmoPsi=st.tmo.psi.over(tmoInterval);
+                if(st.tmo.dueSince>=0) ++tmoDue;
+                rateDonors.push_back({i,app.priority,room,ok && psiOk,backoff,tmoPsi});
+                tmoState=!psiOk?"no_psi":(backoff?"backoff":(st.tmo.dueSince>=0?"due":"idle"));
+            }
+            if(cur[i].valid) {
+                std::vector<std::string> row{u(unixMillis()),app.name,u(cur[i].inode),u(cur[i].current),u(cur[i].anon),u(cur[i].unevictable),u(cur[i].file),
                             u(cur[i].swap),u(cur[i].zswap),u(cur[i].zswapped),u(cur[i].refault),u(cur[i].oomKills),u(residentOf(cur[i])),
-                            u(st.reference),u(floorBytes),u(room),u(cur[i].highEvents),u(cur[i].psi.someTotal),u(cur[i].psi.fullTotal),why});
+                            u(st.reference),u(floorBytes),u(room),u(cur[i].highEvents),u(cur[i].psi.someTotal),u(cur[i].psi.fullTotal),why};
+                if(tmoTrack) { row.push_back(u(tmoPsi)); row.push_back(tmoState); }
+                appLog.row(row);
+            }
         }
-        std::string decision=block.empty()?(reclaiming?"reclaiming":"monitor"):block,target;
+        std::string decision=block.empty()?(brakeOn?"brake":(reclaiming?"reclaiming":"monitor")):block,target,jobReason;
         Bytes planned=0;
-        if(reclaiming && block.empty() && best && !stopping) {
-            Bytes want=sub(wm.high,s.free); want-=want%page;
-            if(want>=o.minBatch) {
-                const auto i=*best; target=cfg.apps[i].name; planned=want;
-                const std::string reason=hinted?"peak_hint":"low_watermark";
-                if(args.apply) {
-                    PulseJob j; j.index=i; j.name=target; j.path=cfg.apps[i].path; j.reason=reason; j.dir=std::move(dirs[i]);
-                    j.want=want; j.floorBytes=amount(o.floorRatio*static_cast<double>(states[i].reference));
-                    decision=worker.submit(std::move(j))?"submitted":"worker_busy";
-                } else {
-                    reclaimLog.row({u(unixMillis()),target,"observe_only",reason,u(want),"0","0","","","","","","","","","","",""});
-                    decision="would_pulse";
+        // One job (observe: one would-pulse row) on app i; true when accepted.
+        auto launch=[&](std::size_t i,Bytes want,Bytes minPulse,const std::string& reason)->bool{
+            target=cfg.apps[i].name; planned=want; jobReason=reason;
+            if(!args.apply) {
+                reclaimLog.row({u(unixMillis()),target,"observe_only",reason,u(want),"0","0","","","","","","","","","","",""});
+                decision="would_pulse"; return true;
+            }
+            PulseJob j; j.index=i; j.name=target; j.path=cfg.apps[i].path; j.reason=reason; j.dir=std::move(dirs[i]);
+            j.want=want; j.floorBytes=floors[i]; j.minPulse=minPulse;
+            const bool accepted=worker.submit(std::move(j));
+            decision=accepted?"submitted":"worker_busy";
+            if(accepted) inflight=reason;
+            return accepted;
+        };
+        // At most one job per tick (the worker runs one at a time): the low-watermark
+        // fallback first, then the rate top-up while active, then the TMO app due longest.
+        if(block.empty() && !brakeOn && !stopping) {
+            bool tried=false;
+            if(reclaiming && best) {
+                Bytes want=sub(wm.high,s.free); want-=want%page;
+                if(want>=o.minBatch) { tried=true; launch(*best,want,0,hinted && !rateMode?"peak_hint":"low_watermark"); }
+            }
+            // While a rate top-up is active it goes before TMO, sized by the time since its last
+            // accepted job, so TMO ticks and a busy worker cannot starve it.
+            if(!tried && need) {
+                if(auto d=pickRateDonor(o,rateDonors,page)) {
+                    const double now=monotonic();
+                    if(!lastRateAt) lastRateAt=now-tickSec;
+                    Bytes want=std::min(rateWant(o,need,rateLeftSec,std::max(tickSec,now-lastRateAt),page),rooms[*d]);
+                    want-=want%page;
+                    if(want>=o.tmoMinStep) {
+                        tried=true;
+                        if(launch(*d,want,o.tmoMinStep,"hint_rate")) lastRateAt=now;
+                    }
+                }
+            }
+            if(!tried && o.tmo) {
+                std::optional<std::size_t> due;
+                for(std::size_t i=0;i<cfg.apps.size();++i) {
+                    const auto& t=states[i].tmo;
+                    if(t.dueSince>=0 && tmoHasRoom(o,rooms[i],page) && (!due || t.dueSince<states[*due].tmo.dueSince)) due=i;
+                }
+                if(due) {
+                    tried=true;
+                    if(launch(*due,states[*due].tmo.step,o.tmoMinStep,"tmo")) tmoSubmitted(o,states[*due].tmo,s.time);
                 }
             }
         }
-        systemLog.row({u(unixMillis()),args.apply?"apply":"observe",u(s.total),u(s.free),u(s.available),u(s.swapFree),u(s.zswap),u(s.zswapped),
+        std::vector<std::string> sysRow{u(unixMillis()),args.apply?"apply":"observe",u(s.total),u(s.free),u(s.available),u(s.swapFree),u(s.zswap),u(s.zswapped),
                        num(s.mem.some10),num(s.mem.full10),num(s.io.some10),u(s.pswpin),u(s.pswpout),hinted?"1":"0",u(hinted?ctl.boost:0),
-                       u(remaining),u(wm.low),u(wm.high),reclaiming?"1":"0",decision,target,u(planned)});
+                       u(remaining),u(wm.low),u(wm.high),reclaiming?"1":"0",decision,target,u(planned)};
+        if(extra)
+            sysRow.insert(sysRow.end(),{jobReason,brakeOn?"1":"0",brake?num(brake->windowMs()):"",u(ctl.peakAt),u(need),
+                                        rateActive?num(rateLeftSec):"",u(tmoDue)});
+        systemLog.row(sysRow);
         deadline+=std::chrono::milliseconds(o.intervalMs);
         if(deadline<std::chrono::steady_clock::now()) deadline=std::chrono::steady_clock::now();
         while(!stopping && std::chrono::steady_clock::now()<deadline) {
@@ -628,6 +802,11 @@ int runHigh(const Args& args,const Configuration& cfg,int root,const EventFn& ev
     while(worker.busy()) {
         if(auto r=worker.take()) { logResult(*r); break; }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    // No more pulses: close an open brake interval so brake.csv durations add up.
+    if(brake && brake->on()) {
+        brakeLog->row({u(unixMillis()),"off",num(brake->windowMs())});
+        event("INFO","brake","off: daemon stopping");
     }
     if(!quotaSet.empty()) restoreQuotas("daemon stopping");
     return samplingFailed?2:0;

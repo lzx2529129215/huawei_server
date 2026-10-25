@@ -9,7 +9,9 @@
 // to disk swap when compressing everything into zswap would not free enough.
 // Only pure arithmetic lives here so it can be tested without cgroups.
 #include "core.hpp"
+#include <deque>
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace ms {
@@ -108,5 +110,171 @@ inline QuotaPlan planZswapQuotas(const Options& o, const std::vector<DonorView>&
     }
     p.unplaced = amount(left);
     return p;
+}
+
+// ---- TMO loop, rate top-up and brake (tmo / hint_mode=rate / brake_some_ms) ----
+
+// Stall accumulated by a cumulative PSI counter (total=, microseconds) over
+// the last `span` seconds. The counter value at now - span is interpolated
+// between the two samples around it; with less history the window starts at
+// the oldest sample. A counter that goes backwards (cgroup recreated) restarts.
+class PsiWindow {
+    std::deque<std::pair<double,Bytes>> h_;
+public:
+    void reset() { h_.clear(); }
+    // Adds a sample; keeps enough history for windows of up to `keep` seconds.
+    void add(double t, Bytes total, double keep) {
+        if (!h_.empty() && (total < h_.back().second || t < h_.back().first)) h_.clear();
+        if (!h_.empty() && t == h_.back().first) h_.back().second = total;
+        else h_.emplace_back(t, total);
+        while (h_.size() >= 2 && h_[1].first <= t - keep) h_.pop_front();
+    }
+    // Stall (us) over the `span` seconds before the newest sample.
+    Bytes over(double span) const {
+        if (h_.size() < 2) return 0;
+        const double cut = h_.back().first - span;
+        std::size_t k = 0;   // last sample at or before the cut, else the oldest
+        while (k + 1 < h_.size() && h_[k + 1].first <= cut) ++k;
+        double base = static_cast<double>(h_[k].second);
+        if (h_[k].first < cut && k + 1 < h_.size()) {
+            const auto& a = h_[k]; const auto& b = h_[k + 1];
+            base += (static_cast<double>(b.second) - base) * (cut - a.first) / (b.first - a.first);
+        }
+        const double d = static_cast<double>(h_.back().second) - base;
+        return d > 0 ? amount(d + 0.5) : 0;
+    }
+};
+
+// Brake: ON when the scope's PSI some stall over the last 1 s reaches onMs;
+// OFF once it has stayed below resumeMs for resumeSec without a break.
+class Brake {
+    PsiWindow w_;
+    double onMs_, resumeMs_, resumeSec_;
+    bool on_ = false;
+    double belowSince_ = -1, windowMs_ = 0;
+public:
+    Brake(double onMs, double resumeMs, double resumeSec) : onMs_(onMs), resumeMs_(resumeMs), resumeSec_(resumeSec) {}
+    explicit Brake(const Options& o) : Brake(o.brakeSomeMs, o.brakeResumeMs, o.brakeResumeSec) {}
+    // t: monotonic seconds; someTotalUs: memory.pressure some total. Returns on().
+    bool update(double t, Bytes someTotalUs) {
+        w_.add(t, someTotalUs, 1.0);
+        windowMs_ = static_cast<double>(w_.over(1.0)) / 1000.0;
+        if (!on_) {
+            if (onMs_ > 0 && windowMs_ >= onMs_) { on_ = true; belowSince_ = -1; }
+        } else if (windowMs_ < resumeMs_) {
+            if (belowSince_ < 0) belowSince_ = t;
+            if (t - belowSince_ >= resumeSec_) { on_ = false; belowSince_ = -1; }
+        } else belowSince_ = -1;
+        return on_;
+    }
+    bool on() const { return on_; }
+    double windowMs() const { return windowMs_; }
+};
+
+// TMO step: net drop asked of one app for one interval. tmo_ratio of its room
+// above the floor, scaled by how far its own PSI stall p is below the target;
+// at least tmo_min_step. No upper cap here: the PulseWorker splits a job into
+// pulses of at most pulse_mb and paces them. 0 once p has reached the target.
+inline Bytes tmoStep(const Options& o, Bytes room, double psiUs, Bytes page) {
+    if (psiUs >= o.tmoPsiTargetUs) return 0;
+    const double scale = 1.0 - std::max(0.0, psiUs) / o.tmoPsiTargetUs;
+    Bytes step = amount(o.tmoRatio * static_cast<double>(room) * scale);
+    step = std::max(step, o.tmoMinStep);
+    return page ? step - step % page : step;
+}
+// Room worth a TMO / rate pulse: one pulse can take at least tmo_min_step.
+inline bool tmoHasRoom(const Options& o, Bytes room, Bytes page) { return pulseLimit(o, room, page) >= o.tmoMinStep; }
+
+// Per-app TMO loop state.
+struct TmoApp {
+    PsiWindow psi;            // the app's memory.pressure some total, fed every tick
+    double next = 0;          // next evaluation (monotonic s); 0 = first chance
+    double backoffUntil = 0;  // paused: its stall reached the target
+    double dueSince = -1;     // >= 0: due for one pulse since then
+    Bytes step = 0;           // net drop for that pulse
+    Bytes lastPsi = 0;        // stall (us) over the interval at the last evaluation
+};
+// One tick for one app (call after psi.add). While eligible, at most once per
+// tmo_interval_ms: p = its stall over the last interval; p >= target pauses it
+// for tmo_backoff_sec (re-evaluated when the pause ends), otherwise it becomes
+// due with tmoStep() unless it is at its floor. Not eligible: not due; it is
+// evaluated as soon as it is eligible again.
+inline void tmoEvaluate(const Options& o, TmoApp& a, double now, bool eligible, Bytes room, Bytes page) {
+    if (!eligible) { a.dueSince = -1; return; }
+    if (now < a.next) return;
+    const double interval = o.tmoIntervalMs / 1000.0;
+    const Bytes p = a.psi.over(interval);
+    a.lastPsi = p;
+    if (static_cast<double>(p) >= o.tmoPsiTargetUs) {
+        a.backoffUntil = now + o.tmoBackoffSec; a.next = a.backoffUntil; a.dueSince = -1; return;
+    }
+    a.next = now + interval;
+    if (!tmoHasRoom(o, room, page)) { a.dueSince = -1; return; }
+    a.step = tmoStep(o, room, static_cast<double>(p), page);
+    if (a.dueSince < 0) a.dueSince = now;
+}
+// The job for a due app was accepted: not due, and its next pulse at least one
+// interval later.
+inline void tmoSubmitted(const Options& o, TmoApp& a, double now) {
+    a.dueSince = -1;
+    a.next = std::max(a.next, now + o.tmoIntervalMs / 1000.0);
+}
+
+// Rate top-up: memory still to free before the hinted peak, i.e. the hinted
+// high watermark (remaining peak + hint reserve, at most `total`) minus free.
+inline Bytes rateNeed(const Options& o, Bytes remaining, Bytes free, Bytes total) {
+    return sub(std::min(add(remaining, o.hintReserve), total), free);
+}
+// Rate mode: peak memory still to come for the whole hint. A hinted app not seen
+// during this hint counts with its full target (it has not started yet); an app
+// seen alive counts target - the largest memory.current seen for it (what it
+// still has to grow; reclaim does not raise it); an app seen and now gone counts 0.
+struct HintApp { Bytes target = 0; bool seen = false, alive = false; Bytes maxCurrent = 0; };
+inline Bytes hintRemaining(const std::vector<HintApp>& apps) {
+    Bytes r = 0;
+    for (const auto& a : apps) {
+        if (!a.seen) r = add(r, a.target);
+        else if (a.alive) r = add(r, sub(a.target, a.maxCurrent));
+    }
+    return r;
+}
+// Rate mode need: projected use at the peak (used + still to come) plus the hint
+// reserve must fit in the scope, so need = remaining + reserve - free (no cap at
+// the scope size: a whole case's peak can be larger than the scope).
+inline Bytes rateNeedHint(const Options& o, Bytes remaining, Bytes free) {
+    return sub(add(remaining, o.hintReserve), free);
+}
+// Seconds the top-up still has: until hint_stop_sec before the peak (<= 0: stop).
+inline double rateLeft(const Options& o, double peakAtUnix, double nowUnix) {
+    return peakAtUnix - nowUnix - o.hintStopSec;
+}
+// This job's share: need / left * elapsed, where elapsed is the time since the
+// last accepted top-up job (at least one tick, so ticks lost to a busy worker
+// are made up); at least tmo_min_step while need > 0, never more than the need.
+// 0 when stopped.
+inline Bytes rateWant(const Options& o, Bytes need, double left, double elapsedSec, Bytes page) {
+    if (!need || !(left > 0)) return 0;
+    Bytes w = std::min(amount(static_cast<double>(need) / left * elapsedSec), need);
+    w = std::max(w, o.tmoMinStep);
+    return page ? w - w % page : w;
+}
+struct RateDonor {
+    std::size_t index = 0;
+    int priority = 0;
+    Bytes room = 0;           // resident - floor
+    bool eligible = false;    // eligible() and its PSI is readable
+    bool backoff = false;     // in TMO backoff
+    Bytes psiUs = 0;          // its stall over the last TMO interval
+};
+// Most expendable donor with room (highest priority, ties: largest room),
+// skipping apps in TMO backoff or at / above the PSI target.
+inline std::optional<std::size_t> pickRateDonor(const Options& o, const std::vector<RateDonor>& v, Bytes page) {
+    std::optional<std::size_t> best;
+    const RateDonor* b = nullptr;
+    for (const auto& d : v) {
+        if (!d.eligible || d.backoff || static_cast<double>(d.psiUs) >= o.tmoPsiTargetUs || !tmoHasRoom(o, d.room, page)) continue;
+        if (!b || d.priority > b->priority || (d.priority == b->priority && d.room > b->room)) { b = &d; best = d.index; }
+    }
+    return best;
 }
 } // namespace ms

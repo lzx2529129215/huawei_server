@@ -9,9 +9,7 @@ int main(int argc,char** argv) {
         bool init=false,show=false,changed=false;
         std::optional<bool> pause;
         std::optional<std::string> protect;
-        std::optional<Bytes> boost;
-        std::optional<std::string> targets;
-        Bytes ttl=30;
+        HintUpdate hint;
         for(int i=1;i<argc;++i) {
             std::string k=argv[i];
             auto val=[&]{if(i+1>=argc) throw std::runtime_error("missing value for "+k);return std::string(argv[++i]);};
@@ -20,18 +18,23 @@ int main(int argc,char** argv) {
             else if(k=="--show") show=true;
             else if(k=="--pause") { pause=boolValue(val()); changed=true; }
             else if(k=="--protect") { protect=val(); changed=true; }
-            else if(k=="--boost-mb") { boost=mbValue(val()); changed=true; }
-            else if(k=="--ttl") ttl=uintValue(val());
-            else if(k=="--peak-targets") { targets=val(); changed=true; }
+            else if(k=="--boost-mb") { hint.boost=mbValue(val()); changed=true; }
+            else if(k=="--ttl") hint.ttl=uintValue(val());
+            else if(k=="--peak-targets") { hint.targets=val(); changed=true; }
+            else if(k=="--peak-at-unix") { hint.peakAt=unixTimeValue(val()); changed=true; }
             else if(k=="--help") {
                 std::cout<<"memshiftctl --file FILE [--init] [--show] [--pause true|false]\n"
                          <<"            [--protect name1,name2|none] [--boost-mb N --ttl SECONDS]\n"
                          <<"            [--peak-targets name:MiB,...|none]  (with --boost-mb; same expiry)\n"
-                         <<"Atomic merge: unspecified fields are preserved. TTL: 1..300.\n"; return 0;
+                         <<"            [--peak-at-unix SECONDS]  (with --boost-mb; unix time of the peak, 0 = unknown;\n"
+                         <<"                                       a decimal is rounded to the nearest second)\n"
+                         <<"Atomic merge: unspecified fields are preserved. TTL: 1..300.\n"
+                         <<"A new --boost-mb replaces the old peak targets and peak time (absent = cleared); --boost-mb 0 clears them.\n";
+                return 0;
             } else throw std::runtime_error("unknown option: "+k);
         }
         if(file.empty()) throw std::runtime_error("--file is required");
-        if(ttl<1 || ttl>300) throw std::runtime_error("ttl must be 1..300 seconds");
+        if(hint.ttl<1 || hint.ttl>300) throw std::runtime_error("ttl must be 1..300 seconds");
         if(show && (changed || init)) throw std::runtime_error("--show cannot modify state");
         if(show || (!changed && !init)) { std::cout<<controlText(parseControl(readPath(file))); return 0; }
         FD lock(::open((file+".lock").c_str(),O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC,0640));
@@ -51,12 +54,7 @@ int main(int argc,char** argv) {
                 }
             }
         }
-        if(targets && !boost) throw std::runtime_error("--peak-targets needs --boost-mb (they share one expiry)");
-        if(boost) {
-            c.boost=*boost; c.until=*boost?add(unixSeconds(),ttl):0;
-            // A new boost replaces the old targets; clearing the boost clears them too.
-            c.peakTargets=(targets && *targets!="none" && *boost)?parsePeakTargets(*targets):std::map<std::string,Bytes>{};
-        }
+        applyHint(c,hint,unixSeconds());
         const auto text=controlText(c);
         temporary=file+".tmp."+std::to_string(::getpid());
         {
